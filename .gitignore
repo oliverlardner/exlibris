@@ -1,0 +1,11 @@
+.DS_Store
+
+# Local environment files
+.env
+.env.*
+
+# Runtime/local data with keys and user content
+data/
+
+# Optional: keep local markdown mirrors out of git too
+*.log
