@@ -50,6 +50,12 @@ render_header('Add Source');
     </form>
 
     <p id="dump-status" class="muted"></p>
+
+    <div id="suggestions-panel" class="card stack hidden">
+        <p class="muted">Low confidence — multiple candidates found. Select one to fill the form, or continue editing manually.</p>
+        <div id="suggestions-list" class="stack"></div>
+    </div>
+
     <details id="lookup-feedback" class="card hidden">
         <summary>Lookup details</summary>
         <pre id="lookup-feedback-body"></pre>

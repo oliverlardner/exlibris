@@ -274,6 +274,16 @@ textarea.drop-active {
   color: #d0d7e2;
 }
 
+[data-source-card] h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+[data-source-card] h2 a:hover {
+  text-decoration: underline;
+  color: inherit;
+}
+
 .meta {
   display: flex;
   gap: 0.65rem;

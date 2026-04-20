@@ -1,6 +1,38 @@
 <?php
 declare(strict_types=1);
 
+(static function (): void {
+    $envFile = __DIR__ . '/../.env';
+    if (!is_file($envFile)) {
+        return;
+    }
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (!is_array($lines)) {
+        return;
+    }
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) {
+            continue;
+        }
+        $eqPos = strpos($line, '=');
+        if ($eqPos === false) {
+            continue;
+        }
+        $key = trim(substr($line, 0, $eqPos));
+        $val = trim(substr($line, $eqPos + 1));
+        if ($val !== '' && $val[0] === '"' && $val[strlen($val) - 1] === '"') {
+            $val = stripslashes(substr($val, 1, -1));
+        } elseif ($val !== '' && $val[0] === "'" && $val[strlen($val) - 1] === "'") {
+            $val = substr($val, 1, -1);
+        }
+        if ($key !== '' && getenv($key) === false) {
+            putenv($key . '=' . $val);
+            $_ENV[$key] = $val;
+        }
+    }
+})();
+
 require_once __DIR__ . '/db.php';
 
 function h(string $value): string

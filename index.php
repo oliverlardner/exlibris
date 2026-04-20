@@ -80,9 +80,9 @@ render_header('Bibliography');
         <div class="actions">
             <button type="button" class="btn btn-copy" id="cluster-btn">Build Clusters</button>
             <button type="button" class="btn btn-copy" id="digest-btn">Run Weekly Digest</button>
-            <button type="button" class="btn btn-load" id="zotero-sync-btn">Sync Zotero</button>
-            <button type="button" class="btn btn-load" id="zotero-sync-collections-btn">Sync Collections</button>
-            <button type="button" class="btn btn-copy" id="zotero-push-unsynced-btn">Push Unsynced</button>
+            <button type="button" class="btn btn-load" id="zotero-sync-btn" title="Import items from Zotero into Ex Libris">Pull Zotero</button>
+            <button type="button" class="btn btn-load" id="zotero-sync-collections-btn" title="Import Zotero collections as local projects">Pull Collections</button>
+            <button type="button" class="btn btn-copy" id="zotero-push-unsynced-btn" title="Push all local sources that aren't yet in Zotero">Push Zotero</button>
         </div>
         <pre id="assistant-panel-output" class="muted"></pre>
     </div>
@@ -113,7 +113,7 @@ render_header('Bibliography');
                 data-citation="<?= h($citation) ?>"
                 data-collection-ids="<?= h($projectIds) ?>"
             >
-                <h2><?= h($source['title'] !== '' ? $source['title'] : 'Untitled source') ?></h2>
+                <h2><?php if ($safeUrl !== ''): ?><a href="<?= h($safeUrl) ?>" target="_blank" rel="noopener noreferrer"><?= h($source['title'] !== '' ? $source['title'] : 'Untitled source') ?></a><?php else: ?><?= h($source['title'] !== '' ? $source['title'] : 'Untitled source') ?><?php endif; ?></h2>
                 <p class="citation"><?= h($citation) ?></p>
                 <div class="meta">
                     <span><?= h($source['type']) ?></span>

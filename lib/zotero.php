@@ -74,16 +74,44 @@ function zotero_fetch_items(int $limit = 25, int $start = 0): array
 
 function zotero_fetch_collections(): array
 {
-    $url = sprintf(
-        'https://api.zotero.org/%s/collections?format=json&limit=100',
-        zotero_library_path()
-    );
+    // Zotero caps each response at 100 items; paginate until exhausted so
+    // libraries with more than 100 collections don't silently truncate
+    // (which otherwise makes newly-created collections appear missing and
+    // causes duplicate-create attempts on push).
+    $pageSize = 100;
+    $maxPages = 50;
+    $collections = [];
+    $start = 0;
 
-    try {
-        return http_get_json($url, zotero_headers());
-    } catch (Throwable $e) {
-        throw new RuntimeException('Zotero collections request failed. Check library type/id and API key permissions. ' . $e->getMessage());
+    for ($page = 0; $page < $maxPages; $page++) {
+        $url = sprintf(
+            'https://api.zotero.org/%s/collections?format=json&limit=%d&start=%d',
+            zotero_library_path(),
+            $pageSize,
+            $start
+        );
+
+        try {
+            $batch = http_get_json($url, zotero_headers());
+        } catch (Throwable $e) {
+            throw new RuntimeException('Zotero collections request failed. Check library type/id and API key permissions. ' . $e->getMessage());
+        }
+
+        if (!is_array($batch) || $batch === []) {
+            break;
+        }
+
+        foreach ($batch as $collection) {
+            $collections[] = $collection;
+        }
+
+        if (count($batch) < $pageSize) {
+            break;
+        }
+        $start += $pageSize;
     }
+
+    return $collections;
 }
 
 function zotero_fetch_item(string $itemKey): ?array

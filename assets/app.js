@@ -127,6 +127,46 @@
     form.classList.remove("hidden");
   }
 
+  function renderSuggestions(suggestions) {
+    const panel = qs("#suggestions-panel");
+    const list  = qs("#suggestions-list");
+    if (!panel || !list) return;
+
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      panel.classList.add("hidden");
+      list.innerHTML = "";
+      return;
+    }
+
+    list.innerHTML = "";
+    suggestions.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const meta = document.createElement("span");
+      const authorStr = Array.isArray(s.authors) ? s.authors.slice(0, 2).join(", ") : "";
+      const parts = [s.title, authorStr, s.year, s.publisher].filter(Boolean);
+      meta.textContent = parts.join(" — ");
+      meta.style.flex = "1";
+
+      const btn = document.createElement("button");
+      btn.className = "btn btn-load";
+      btn.type = "button";
+      btn.textContent = "Use";
+      btn.addEventListener("click", () => {
+        fillSourceForm(s);
+        panel.classList.add("hidden");
+        setStatus(`Loaded: ${s.title || "selected source"}.`);
+      });
+
+      row.appendChild(meta);
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+
+    panel.classList.remove("hidden");
+  }
+
   async function processDumpInput() {
     const input = (qs("#dump-input")?.value || "").trim();
     if (!input) return setStatus("Please paste input first.", true);
@@ -134,7 +174,10 @@
       setStatus("Processing...");
       const data = await postJson("/api/process.php", { input });
       fillSourceForm(data.source || {});
-      setStatus(`Parsed as ${data.input_type || "unknown"}.`);
+      renderSuggestions(data.suggestions || []);
+      const suggCount = (data.suggestions || []).length;
+      const baseMsg = `Parsed as ${data.input_type || "unknown"}.`;
+      setStatus(suggCount > 0 ? `${baseMsg} ${suggCount} suggestion${suggCount > 1 ? "s" : ""} below.` : baseMsg);
       renderLookupTrace(data.lookup_trace || []);
     } catch (error) {
       setStatus(error.message || "Processing failed.", true);
@@ -158,11 +201,17 @@
 
   async function saveSource(event) {
     event.preventDefault();
+    // Capture the form before awaiting — some browsers (Safari in particular)
+    // null out event.currentTarget after the handler yields, which would throw
+    // "null is not an object (evaluating 'event.currentTarget.elements')".
+    const form = event.currentTarget || event.target;
     try {
       setStatus("Saving...");
-      const source = parseSourceForm(event.currentTarget);
+      const source = parseSourceForm(form);
       const data = await postJson("/api/save.php", { source });
-      event.currentTarget.elements.id.value = data.id || "";
+      if (form && form.elements && form.elements.id) {
+        form.elements.id.value = data.id || "";
+      }
       setStatus("Saved.");
     } catch (error) {
       setStatus(error.message || "Save failed.", true);
@@ -277,11 +326,22 @@
           button.textContent = "Pushing...";
           const data = await postJson("/api/zotero.php", { mode: "push_one", source_id: sourceId });
           setText("#assistant-panel-output", JSON.stringify(data, null, 2));
+          // Per-source results can still contain a failure payload even on a
+          // 200 response (e.g. collection creation failed). Surface those.
+          const firstResult = Array.isArray(data.results) ? data.results[0] : null;
+          if (firstResult && firstResult.status === "error") {
+            const msg = firstResult.error || "Push failed";
+            button.textContent = "Push failed";
+            setTimeout(() => (button.textContent = "Push Zotero"), 2000);
+            alert("Zotero push failed: " + msg);
+            return;
+          }
           button.textContent = "Pushed";
           setTimeout(() => (button.textContent = "Push Zotero"), 1200);
         } catch (error) {
           button.textContent = "Push failed";
-          setTimeout(() => (button.textContent = "Push Zotero"), 1400);
+          setTimeout(() => (button.textContent = "Push Zotero"), 2000);
+          alert("Zotero push failed: " + (error.message || "unknown error"));
         }
       });
     });

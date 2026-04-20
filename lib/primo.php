@@ -17,24 +17,37 @@ function primo_fetch_permalink_metadata(string $url, callable $isbnNormalizer): 
     }
 
     parse_str((string) ($parts['query'] ?? ''), $params);
-    $vid = (string) ($params['vid'] ?? '');
+    $vid   = (string) ($params['vid'] ?? '');
     $scope = (string) ($params['search_scope'] ?? '');
     $query = (string) ($params['query'] ?? '');
-    $docid = strtolower((string) ($params['docid'] ?? ''));
-    if ($vid === '' || $scope === '' || $query === '') {
+    $docid = (string) ($params['docid'] ?? '');
+    if ($vid === '' || $scope === '') {
         return null;
     }
 
-    $apiUrl = sprintf(
-        'https://%s/primaws/rest/pub/pnxs?vid=%s&lang=en&scope=%s&q=%s',
-        $host,
-        rawurlencode($vid),
-        rawurlencode($scope),
-        rawurlencode($query)
-    );
+    $headers   = ['User-Agent: exlibris/1.0'];
+    $baseQuery = http_build_query(['vid' => $vid, 'lang' => 'en', 'scope' => $scope]);
 
+    // Strategy 1: direct recordid lookup — precise, doesn't depend on search ranking
+    if ($docid !== '') {
+        $docidQuery = 'recordid,exact,' . $docid;
+        $directUrl  = sprintf('https://%s/primaws/rest/pub/pnxs?%s&q=%s', $host, $baseQuery, rawurlencode($docidQuery));
+        try {
+            $json = http_get_json($directUrl, $headers);
+            $docs = $json['docs'] ?? [];
+            if (is_array($docs) && $docs !== []) {
+                return primo_map_doc_to_source($docs[0], $url, $isbnNormalizer);
+            }
+        } catch (Throwable) {}
+    }
+
+    // Strategy 2: fall back to the search query in the URL, then match docid in results
+    if ($query === '') {
+        return null;
+    }
+    $searchUrl = sprintf('https://%s/primaws/rest/pub/pnxs?%s&q=%s', $host, $baseQuery, rawurlencode($query));
     try {
-        $json = http_get_json($apiUrl, ['User-Agent: exlibris/1.0']);
+        $json = http_get_json($searchUrl, $headers);
     } catch (Throwable) {
         return null;
     }
@@ -44,10 +57,11 @@ function primo_fetch_permalink_metadata(string $url, callable $isbnNormalizer): 
         return null;
     }
 
-    $selected = null;
+    $docidLower = strtolower($docid);
+    $selected   = null;
     foreach ($docs as $doc) {
         $recordId = strtolower((string) ($doc['pnx']['control']['recordid'][0] ?? ''));
-        if ($docid !== '' && $recordId === $docid) {
+        if ($docidLower !== '' && $recordId === $docidLower) {
             $selected = $doc;
             break;
         }
