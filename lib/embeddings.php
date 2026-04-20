@@ -15,6 +15,11 @@ function embedding_input_for_source(array $source): string
         (string) ($source['year'] ?? ''),
         (string) ($source['publisher'] ?? ''),
         (string) ($source['journal'] ?? ''),
+        (string) ($source['ai_summary'] ?? ''),
+        (string) ($source['doi'] ?? ''),
+        (string) ($source['isbn'] ?? ''),
+        (string) ($source['url'] ?? ''),
+        (string) ($source['provenance_summary'] ?? ''),
         (string) ($source['notes'] ?? ''),
         (string) ($source['raw_input'] ?? ''),
     ]));
@@ -80,6 +85,10 @@ function cosine_similarity(array $a, array $b): float
 
 function semantic_search_sources(string $query, int $limit = 10): array
 {
+    $query = trim($query);
+    if ($query === '') {
+        return [];
+    }
     $queryVector = openai_embedding($query);
     if ($queryVector === []) {
         return [];
@@ -88,9 +97,7 @@ function semantic_search_sources(string $query, int $limit = 10): array
     $rows = db()->query(
         'SELECT s.*, e.embedding_json
          FROM sources s
-         JOIN source_embeddings e ON e.source_id = s.id
-         ORDER BY s.updated_at DESC
-         LIMIT 500'
+         JOIN source_embeddings e ON e.source_id = s.id'
     )->fetchAll() ?: [];
 
     $scored = [];

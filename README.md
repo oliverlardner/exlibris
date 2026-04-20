@@ -71,8 +71,14 @@ Input is detected automatically and routed through the appropriate pipeline, in 
   - Citation QA/style checks
   - Research question builder
   - Compare-and-contrast briefs
+  - L1 Reader synthesis (`reader_synthesis`): context-aware, multi-source compression with verdict (`read`/`skim`/`ignore`), evidence links, cautions, and external candidate suggestions
   - Weekly digest generation + run storage
   - Zotero sync status support
+- Reader UI (`reader.php`) supports:
+  - Selecting 0+ local sources and adding free-text research context
+  - Hybrid context expansion (semantic shortlist + scholarly API lookups + OpenAI hosted web search)
+  - Cached page-body extraction (`sources.body_text`) so repeated reader runs stay fast while periodically refreshing stale source text
+  - Reader run history loaded from `assistant_runs` so prior syntheses can be revisited and reloaded
 
 ### Zotero Integration
 
@@ -118,6 +124,7 @@ Runtime schema bootstrap occurs in `lib/db.php`.
    EXLIBRIS_ADMIN_TOKEN=<generate with: openssl rand -hex 32>
    EXLIBRIS_OPENAI_API_KEY=
    EXLIBRIS_OPENAI_CHAT_MODEL=gpt-4o-mini
+   EXLIBRIS_OPENAI_READER_MODEL=gpt-4o-mini
    EXLIBRIS_OPENAI_EMBED_MODEL=text-embedding-3-small
    ```
 3. The `.env` file is loaded at runtime — no server restart needed for Valet/PHP-FPM.
@@ -136,6 +143,7 @@ Runtime schema bootstrap occurs in `lib/db.php`.
 | `EXLIBRIS_ADMIN_TOKEN` | Yes | *(none)* | Required — write APIs fail closed without it |
 | `EXLIBRIS_OPENAI_API_KEY` | No | *(settings DB)* | Env takes priority over Settings UI |
 | `EXLIBRIS_OPENAI_CHAT_MODEL` | No | `gpt-4o-mini` | Chat model for extraction + assistant |
+| `EXLIBRIS_OPENAI_READER_MODEL` | No | `gpt-4o-mini` | Model used for L1 Reader synthesis (`/v1/responses` with hosted web search). If unset, falls back to chat model. |
 | `EXLIBRIS_OPENAI_EMBED_MODEL` | No | `text-embedding-3-small` | Embeddings model |
 | `EXLIBRIS_ZOTERO_TRANSLATION_URL` | No | `https://translate.manubot.org/web` | Zotero translation-server endpoint for URL → bibliographic metadata. Point at a self-hosted instance for production: `docker run -d -p 1969:1969 zotero/translation-server` then set to `http://localhost:1969/web`. |
 | `EXLIBRIS_SEMANTIC_SCHOLAR_KEY` | No | *(empty)* | Optional Semantic Scholar Graph API key. Raises rate limits; without a key, shared-pool 429s are treated as "no result" and the pipeline continues to other backups. |
@@ -145,6 +153,7 @@ Runtime schema bootstrap occurs in `lib/db.php`.
 - Mutating APIs require `X-Admin-Token: <value>` header matching `EXLIBRIS_ADMIN_TOKEN`.
 - Write/compute POST APIs fail closed if the token is not configured.
 - OpenAI key is env-first; settings-based key fallback is still supported.
+- Reader runs that enable hosted web search are slower and costlier than local-only assistant actions; expect roughly 20-60s end-to-end for multi-source synthesis.
 - `.env` values are only loaded if the environment variable is not already set — OS/server env always wins.
 - Structured app events are logged through `app_log()` in `lib/common.php`.
 - If migrating from old JSON-only mode, import `data/sources.json` into Postgres to restore legacy refs.

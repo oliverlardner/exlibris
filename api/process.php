@@ -10,6 +10,7 @@ require_once __DIR__ . '/../lib/primo.php';
 require_once __DIR__ . '/../lib/zotero_translate.php';
 require_once __DIR__ . '/../lib/openalex.php';
 require_once __DIR__ . '/../lib/semantic_scholar.php';
+require_once __DIR__ . '/../lib/process_lookup.php';
 
 ensure_defaults();
 require_admin_for_write();
@@ -397,6 +398,8 @@ try {
     }
 
     $result['raw_input'] = $input;
+    $result['lookup_trace'] = $lookupTrace;
+    $result['provenance_summary'] = summarize_lookup_trace($inputType, $lookupTrace);
     $result['provenance'] = [
         'input_type' => $inputType,
         'confidence' => ($inputType === 'doi' || $inputType === 'isbn' || $inputType === 'bibtex' || $inputType === 'ris') ? 'high' : 'medium',
@@ -424,89 +427,9 @@ try {
     ], 502);
 }
 
-/**
- * Cascades through DOI-resolving providers until one returns usable metadata.
- *
- * Order: CrossRef → OpenAlex → Semantic Scholar. The first provider that
- * yields a title (the minimum useful signal) wins. Every attempt is recorded
- * in $trace so the UI can show the provenance.
- */
-function lookup_doi_with_fallbacks(string $doi, array &$trace): ?array
-{
-    $doi = trim($doi);
-    if ($doi === '') {
-        return null;
-    }
-
-    // 1) CrossRef — the canonical DOI registry for scholarly works.
-    try {
-        $crossref = lookup_doi_crossref($doi);
-        $hasTitle = is_array($crossref) && trim((string) ($crossref['title'] ?? '')) !== '';
-        $trace[] = [
-            'step'   => 'crossref',
-            'status' => $hasTitle ? 'success' : 'no_result',
-            'detail' => $hasTitle ? 'CrossRef returned metadata.' : 'CrossRef returned no result.',
-        ];
-        if ($hasTitle) {
-            return $crossref;
-        }
-    } catch (Throwable) {
-        $trace[] = ['step' => 'crossref', 'status' => 'error', 'detail' => 'CrossRef request failed.'];
-    }
-
-    // 2) OpenAlex — covers many preprints and OA works CrossRef may miss.
-    try {
-        $openalex = openalex_by_doi($doi);
-        $hasTitle = is_array($openalex) && trim((string) ($openalex['title'] ?? '')) !== '';
-        $trace[] = [
-            'step'   => 'openalex',
-            'status' => $hasTitle ? 'success' : 'no_result',
-            'detail' => $hasTitle ? 'OpenAlex returned metadata for the DOI.' : 'OpenAlex had no result for the DOI.',
-        ];
-        if ($hasTitle) {
-            return $openalex;
-        }
-    } catch (Throwable) {
-        $trace[] = ['step' => 'openalex', 'status' => 'error', 'detail' => 'OpenAlex request failed.'];
-    }
-
-    // 3) Semantic Scholar — last structured backup before AI.
-    try {
-        $ss = semantic_scholar_by_doi($doi);
-        $hasTitle = is_array($ss) && trim((string) ($ss['title'] ?? '')) !== '';
-        $trace[] = [
-            'step'   => 'semantic_scholar',
-            'status' => $hasTitle ? 'success' : 'no_result',
-            'detail' => $hasTitle ? 'Semantic Scholar returned metadata for the DOI.' : 'Semantic Scholar had no result for the DOI.',
-        ];
-        if ($hasTitle) {
-            return $ss;
-        }
-    } catch (Throwable) {
-        $trace[] = ['step' => 'semantic_scholar', 'status' => 'error', 'detail' => 'Semantic Scholar request failed.'];
-    }
-
-    return null;
-}
-
 function fetch_page_html(string $url): string
 {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT        => 15,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        CURLOPT_HTTPHEADER     => ['Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language: en-US,en;q=0.9'],
-    ]);
-    $html = curl_exec($ch);
-    if (!is_string($html) || $html === '') {
-        curl_close($ch);
-        return '';
-    }
-    curl_close($ch);
-
-    return $html;
+    return http_fetch_html($url, 15);
 }
 
 // ── Anna's Archive helpers ────────────────────────────────────────────────────
@@ -702,14 +625,7 @@ function is_weak_zotero_stub(array $ztResult): bool
 
 function html_to_text(string $html): string
 {
-    if ($html === '') {
-        return '';
-    }
-
-    $text = strip_tags($html);
-    $text = preg_replace('/\s+/', ' ', $text) ?? '';
-
-    return mb_substr(trim($text), 0, 12000);
+    return http_html_to_text($html, 12000);
 }
 
 function merge_source_candidates(?array $primary, ?array $secondary, string $url): array
@@ -1341,107 +1257,25 @@ function fallback_with_openai_identifier(string $kind, string $value, array &$tr
     return $result;
 }
 
-function fetch_primo_permalink_metadata(string $url): ?array
+function summarize_lookup_trace(string $inputType, array $trace): string
 {
-    $parts = parse_url($url);
-    if (!is_array($parts)) {
-        return null;
-    }
-
-    $host = strtolower((string) ($parts['host'] ?? ''));
-    $path = (string) ($parts['path'] ?? '');
-    if (!str_contains($host, 'exlibrisgroup.com') || !str_contains($path, '/discovery/fulldisplay')) {
-        return null;
-    }
-
-    parse_str((string) ($parts['query'] ?? ''), $params);
-    $vid = (string) ($params['vid'] ?? '');
-    $scope = (string) ($params['search_scope'] ?? '');
-    $query = (string) ($params['query'] ?? '');
-    $docid = strtolower((string) ($params['docid'] ?? ''));
-    if ($vid === '' || $scope === '' || $query === '') {
-        return null;
-    }
-
-    $apiUrl = sprintf(
-        'https://%s/primaws/rest/pub/pnxs?vid=%s&lang=en&scope=%s&q=%s',
-        $host,
-        rawurlencode($vid),
-        rawurlencode($scope),
-        rawurlencode($query)
-    );
-
-    try {
-        $json = http_get_json($apiUrl, ['User-Agent: exlibris/1.0']);
-    } catch (Throwable) {
-        return null;
-    }
-
-    $docs = $json['docs'] ?? [];
-    if (!is_array($docs) || $docs === []) {
-        return null;
-    }
-
-    $selected = null;
-    foreach ($docs as $doc) {
-        $recordId = strtolower((string) ($doc['pnx']['control']['recordid'][0] ?? ''));
-        if ($docid !== '' && $recordId === $docid) {
-            $selected = $doc;
-            break;
+    $inputType = trim($inputType);
+    $winningStep = '';
+    foreach ($trace as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        if ((string) ($item['status'] ?? '') === 'success') {
+            $winningStep = (string) ($item['step'] ?? '');
         }
     }
-
-    if (!is_array($selected)) {
-        $selected = $docs[0];
+    if ($winningStep !== '') {
+        return ($inputType !== '' ? strtoupper($inputType) : 'INPUT') . ' resolved via ' . $winningStep . '.';
+    }
+    if ($trace !== []) {
+        return ($inputType !== '' ? strtoupper($inputType) : 'INPUT') . ' parsed with partial/low-confidence metadata.';
     }
 
-    return map_primo_doc_to_source($selected, $url);
+    return $inputType !== '' ? strtoupper($inputType) . ' parsed.' : 'Parsed.';
 }
 
-function map_primo_doc_to_source(array $doc, string $url): array
-{
-    $display = $doc['pnx']['display'] ?? [];
-    $addata = $doc['pnx']['addata'] ?? [];
-
-    $authors = [];
-    foreach (($addata['au'] ?? $display['creator'] ?? []) as $rawAuthor) {
-        $author = trim(preg_replace('/\$\$Q.*$/', '', (string) $rawAuthor) ?? '');
-        if ($author !== '') {
-            $authors[] = $author;
-        }
-    }
-
-    $yearRaw = (string) (($addata['date'][0] ?? '') ?: ($display['creationdate'][0] ?? ''));
-    $year = '';
-    if (preg_match('/\b(19|20)\d{2}\b/', $yearRaw, $m)) {
-        $year = $m[0];
-    }
-
-    $isbn = '';
-    $isbnCandidates = $addata['isbn'] ?? $display['identifier'] ?? [];
-    if (is_array($isbnCandidates)) {
-        foreach ($isbnCandidates as $candidate) {
-            $normalized = normalize_isbn((string) $candidate);
-            if ($normalized !== '') {
-                $isbn = $normalized;
-                break;
-            }
-        }
-    }
-
-    return [
-        'type' => strtolower((string) ($display['type'][0] ?? 'book')) === 'book' ? 'book' : 'website',
-        'title' => trim((string) ($display['title'][0] ?? $addata['btitle'][0] ?? '')),
-        'authors' => array_values(array_unique($authors)),
-        'year' => $year,
-        'publisher' => trim((string) (($addata['pub'][0] ?? '') ?: ($display['publisher'][0] ?? ''))),
-        'journal' => '',
-        'volume' => '',
-        'issue' => '',
-        'pages' => '',
-        'doi' => trim((string) ($addata['doi'][0] ?? '')),
-        'isbn' => $isbn,
-        'url' => $url,
-        'notes' => 'Metadata extracted from Primo permalink API.',
-    ];
-}

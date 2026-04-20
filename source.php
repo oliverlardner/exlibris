@@ -80,11 +80,24 @@ render_header('Source');
         </div>
         <label>Notes <textarea name="notes" rows="4"><?= h($source['notes']) ?></textarea></label>
         <input type="hidden" name="raw_input" value="<?= h($source['raw_input']) ?>">
+        <input type="hidden" name="provenance_summary" value="<?= h((string) ($source['provenance_summary'] ?? '')) ?>">
+        <input type="hidden" name="lookup_trace_json" value="<?= h(json_encode($source['lookup_trace'] ?? [], JSON_UNESCAPED_UNICODE)) ?>">
         <input type="hidden" name="id" value="<?= (int) $source['id'] ?>">
         <div class="actions">
             <button class="btn" type="submit">Save Changes</button>
         </div>
     </form>
+    <?php if (trim((string) ($source['provenance_summary'] ?? '')) !== '' || ($source['lookup_trace'] ?? []) !== []): ?>
+        <article class="card stack">
+            <h2>Provenance</h2>
+            <?php if (trim((string) ($source['provenance_summary'] ?? '')) !== ''): ?>
+                <p class="muted"><?= h((string) $source['provenance_summary']) ?></p>
+            <?php endif; ?>
+            <?php if (($source['lookup_trace'] ?? []) !== []): ?>
+                <pre class="muted"><?= h(json_encode($source['lookup_trace'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) ?></pre>
+            <?php endif; ?>
+        </article>
+    <?php endif; ?>
     <article class="card stack">
         <h2>Assistant Copilot</h2>
         <p class="muted">Run source-quality scoring, annotation, citation QA, and similar-source lookup.</p>
@@ -96,7 +109,7 @@ render_header('Source');
         </div>
         <pre id="assistant-source-output" class="muted"></pre>
     </article>
-    <p id="dump-status" class="muted"></p>
+    <p id="app-status" class="muted"></p>
 </section>
 <datalist id="project-name-options">
     <?php foreach ($allProjects as $project): ?>

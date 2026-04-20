@@ -300,6 +300,62 @@ textarea.drop-active {
   color: #8ca1bf;
 }
 
+.reader-source-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 45%);
+  padding: 0.15rem 0.4rem;
+  border-radius: 2px;
+  color: var(--text);
+  margin-right: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.reader-source-tag-remove {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0;
+}
+
+.reader-source-tag-remove:hover {
+  color: var(--danger);
+}
+
+.reader-suggestion-title {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+}
+
+.reader-suggestion-title:hover {
+  color: var(--accent);
+}
+
+.reader-source-ref {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.reader-source-ref:hover {
+  color: var(--success);
+}
+
+.reader-loader {
+  color: var(--accent);
+  white-space: pre;
+  min-height: 3.4rem;
+}
+
 pre {
   margin: 0;
   white-space: pre-wrap;

@@ -50,7 +50,10 @@ render_header('Bibliography');
 <section class="stack">
     <div class="row">
         <h1>Bibliography</h1>
-        <a class="btn" href="/dump.php">Add Source</a>
+        <div class="actions">
+            <a class="btn btn-secondary" id="compose-reader-link" href="/reader.php">Compose Reader</a>
+            <a class="btn" href="/dump.php">Add Source</a>
+        </div>
     </div>
     <p class="muted">Current citation style: <strong><?= h(strtoupper($format)) ?></strong></p>
 
@@ -109,6 +112,7 @@ render_header('Bibliography');
             <article
                 class="card"
                 data-source-card
+                data-source-id="<?= (int) ($source['id'] ?? 0) ?>"
                 data-search="<?= h($search) ?>"
                 data-citation="<?= h($citation) ?>"
                 data-collection-ids="<?= h($projectIds) ?>"
@@ -126,6 +130,7 @@ render_header('Bibliography');
                 </div>
                 <div class="actions">
                     <a class="btn btn-load" href="/source.php?id=<?= (int) $source['id'] ?>">Load</a>
+                    <a class="btn btn-secondary" href="/reader.php?ids=<?= (int) $source['id'] ?>">Read</a>
                     <?php if ($safeUrl !== ''): ?>
                         <a
                             class="btn"

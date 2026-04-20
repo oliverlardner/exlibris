@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/common.php';
 
 function formatter_include_pages(): bool
 {
-    $value = trim((string) setting('include_pages_in_citations', '1'));
-
-    return !in_array($value, ['0', 'false', 'no', 'off'], true);
+    return include_pages_in_citations();
 }
 
 function format_citation(array $source, string $format): string
@@ -255,6 +253,11 @@ function source_to_array(array $row): array
         'accessed_at' => (string) ($row['accessed_at'] ?? ''),
         'raw_input' => (string) ($row['raw_input'] ?? ''),
         'notes' => (string) ($row['notes'] ?? ''),
+        'lookup_trace' => $decodeMaybeJsonArray($row['lookup_trace'] ?? []),
+        'provenance_summary' => (string) ($row['provenance_summary'] ?? ''),
+        'body_text' => (string) ($row['body_text'] ?? ''),
+        'body_fetched_at' => (string) ($row['body_fetched_at'] ?? ''),
+        'body_source' => (string) ($row['body_source'] ?? ''),
         'quality_score' => isset($row['quality_score']) ? (float) $row['quality_score'] : null,
         'quality_reason' => (string) ($row['quality_reason'] ?? ''),
         'ai_summary' => (string) ($row['ai_summary'] ?? ''),

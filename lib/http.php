@@ -112,3 +112,38 @@ function http_post_json(string $url, array $payload, array $headers = [], int $t
 
     throw new RuntimeException($lastError);
 }
+
+function http_fetch_html(string $url, int $timeout = 15): string
+{
+    $url = trim($url);
+    if ($url === '') {
+        return '';
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => $timeout,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        CURLOPT_HTTPHEADER => ['Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language: en-US,en;q=0.9'],
+    ]);
+    $html = curl_exec($ch);
+    curl_close($ch);
+
+    return is_string($html) ? $html : '';
+}
+
+function http_html_to_text(string $html, int $maxChars = 12000): string
+{
+    if ($html === '') {
+        return '';
+    }
+    $text = strip_tags($html);
+    $text = preg_replace('/\s+/', ' ', $text) ?? '';
+    $text = trim($text);
+    if ($text === '') {
+        return '';
+    }
+
+    return mb_substr($text, 0, max(1, $maxChars));
+}

@@ -3,12 +3,11 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/http.php';
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/common.php';
 
 function openai_config_value(string $group, string $key, mixed $default = null): mixed
 {
-    $config = require __DIR__ . '/../config.php';
-
-    return $config[$group][$key] ?? $default;
+    return config_value($group, $key, $default);
 }
 
 function validate_openai_api_key(string $apiKey): array
@@ -158,6 +157,110 @@ function openai_json_response(string $systemPrompt, string $userPrompt): ?array
     $decoded = json_decode($content, true);
 
     return is_array($decoded) ? $decoded : null;
+}
+
+function openai_reader_model(): string
+{
+    $env = trim((string) getenv('EXLIBRIS_OPENAI_READER_MODEL'));
+    if ($env !== '') {
+        return $env;
+    }
+    $fromConfig = trim((string) openai_config_value('ai', 'reader_model', ''));
+    if ($fromConfig !== '') {
+        return $fromConfig;
+    }
+
+    return (string) openai_config_value('ai', 'chat_model', 'gpt-4o-mini');
+}
+
+/**
+ * Calls the Responses API with hosted web_search enabled and returns a parsed
+ * JSON object when possible.
+ *
+ * @return array{output: array<string, mixed>, usage: array<string, mixed>}|null
+ */
+function openai_responses_with_web_search(string $systemPrompt, string $userPrompt, array $jsonSchema, string $model = ''): ?array
+{
+    $apiKey = effective_openai_api_key();
+    if ($apiKey === '') {
+        return null;
+    }
+    $chosenModel = trim($model) !== '' ? trim($model) : openai_reader_model();
+    $schemaName = (string) ($jsonSchema['name'] ?? 'reader_synthesis');
+    $schemaBody = is_array($jsonSchema['schema'] ?? null) ? $jsonSchema['schema'] : [];
+    if ($schemaBody === []) {
+        return null;
+    }
+
+    $payload = [
+        'model' => $chosenModel,
+        'input' => [
+            [
+                'role' => 'system',
+                'content' => [
+                    ['type' => 'input_text', 'text' => $systemPrompt],
+                ],
+            ],
+            [
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'input_text', 'text' => $userPrompt],
+                ],
+            ],
+        ],
+        'tools' => [
+            ['type' => 'web_search'],
+        ],
+        'text' => [
+            'format' => [
+                'type' => 'json_schema',
+                'name' => $schemaName,
+                'schema' => $schemaBody,
+                'strict' => true,
+            ],
+        ],
+    ];
+
+    $data = http_post_json(
+        'https://api.openai.com/v1/responses',
+        $payload,
+        ['Authorization: Bearer ' . $apiKey]
+    );
+
+    $outputText = trim((string) ($data['output_text'] ?? ''));
+    if ($outputText === '') {
+        $output = is_array($data['output'] ?? null) ? $data['output'] : [];
+        foreach ($output as $chunk) {
+            if (!is_array($chunk)) {
+                continue;
+            }
+            $contentList = is_array($chunk['content'] ?? null) ? $chunk['content'] : [];
+            foreach ($contentList as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $text = trim((string) ($item['text'] ?? ''));
+                if ($text !== '') {
+                    $outputText = $text;
+                    break 2;
+                }
+            }
+        }
+    }
+
+    if ($outputText === '') {
+        return null;
+    }
+
+    $decoded = json_decode($outputText, true);
+    if (!is_array($decoded)) {
+        return null;
+    }
+
+    return [
+        'output' => $decoded,
+        'usage' => is_array($data['usage'] ?? null) ? $data['usage'] : [],
+    ];
 }
 
 function openai_embedding(string $input): array

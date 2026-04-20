@@ -22,6 +22,10 @@ $authors = $source['authors'] ?? [];
 if (!is_array($authors)) {
     $authors = [];
 }
+$lookupTrace = $source['lookup_trace'] ?? [];
+if (!is_array($lookupTrace)) {
+    $lookupTrace = [];
+}
 $hasProjectNames = array_key_exists('project_names', $source);
 $projectNames = $source['project_names'] ?? [];
 if (!is_array($projectNames)) {
@@ -46,6 +50,8 @@ $record = [
     'accessed_at' => trim((string) ($source['accessed_at'] ?? '')),
     'raw_input' => (string) ($source['raw_input'] ?? ''),
     'notes' => (string) ($source['notes'] ?? ''),
+    'lookup_trace' => $lookupTrace,
+    'provenance_summary' => trim((string) ($source['provenance_summary'] ?? '')),
 ];
 if ($hasProjectNames) {
     $record['project_names'] = $projectNames;

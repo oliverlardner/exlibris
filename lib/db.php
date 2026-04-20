@@ -70,6 +70,11 @@ function ensure_schema(PDO $pdo): void
             accessed_at TEXT NOT NULL DEFAULT \'\',
             raw_input TEXT NOT NULL DEFAULT \'\',
             notes TEXT NOT NULL DEFAULT \'\',
+            lookup_trace JSONB NOT NULL DEFAULT \'[]\'::jsonb,
+            provenance_summary TEXT NOT NULL DEFAULT \'\',
+            body_text TEXT NOT NULL DEFAULT \'\',
+            body_fetched_at TIMESTAMPTZ NULL,
+            body_source TEXT NOT NULL DEFAULT \'\',
             citation_cache JSONB NOT NULL DEFAULT \'{}\'::jsonb,
             quality_score DOUBLE PRECISION NULL,
             quality_reason TEXT NOT NULL DEFAULT \'\',
@@ -97,6 +102,11 @@ function ensure_schema(PDO $pdo): void
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS zotero_item_key TEXT NOT NULL DEFAULT \'\'');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS zotero_version BIGINT NULL');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS zotero_synced_at TIMESTAMPTZ NULL');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_text TEXT NOT NULL DEFAULT \'\'');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_fetched_at TIMESTAMPTZ NULL');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_source TEXT NOT NULL DEFAULT \'\'');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS lookup_trace JSONB NOT NULL DEFAULT \'[]\'::jsonb');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS provenance_summary TEXT NOT NULL DEFAULT \'\'');
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS source_project (
             source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -497,6 +507,11 @@ function save_source(array $source): array
         'accessed_at' => (string) $pick('accessed_at', ''),
         'raw_input' => (string) $pick('raw_input', ''),
         'notes' => (string) $pick('notes', ''),
+        'lookup_trace' => json_encode(is_array($pick('lookup_trace', [])) ? $pick('lookup_trace', []) : [], JSON_UNESCAPED_UNICODE),
+        'provenance_summary' => (string) $pick('provenance_summary', ''),
+        'body_text' => (string) $pick('body_text', ''),
+        'body_fetched_at' => (string) $pick('body_fetched_at', ''),
+        'body_source' => (string) $pick('body_source', ''),
         'citation_cache' => json_encode(is_array($pick('citation_cache', [])) ? $pick('citation_cache', []) : [], JSON_UNESCAPED_UNICODE),
         'quality_score' => $pick('quality_score', null),
         'quality_reason' => (string) $pick('quality_reason', ''),
@@ -520,7 +535,10 @@ function save_source(array $source): array
                 type=:type, title=:title, authors=CAST(:authors AS jsonb), year=:year,
                 publisher=:publisher, journal=:journal, volume=:volume, issue=:issue,
                 pages=:pages, doi=:doi, isbn=:isbn, url=:url, accessed_at=:accessed_at,
-                raw_input=:raw_input, notes=:notes, citation_cache=CAST(:citation_cache AS jsonb),
+                raw_input=:raw_input, notes=:notes,
+                lookup_trace=CAST(:lookup_trace AS jsonb), provenance_summary=:provenance_summary,
+                body_text=:body_text, body_fetched_at=NULLIF(:body_fetched_at, \'\')::timestamptz, body_source=:body_source,
+                citation_cache=CAST(:citation_cache AS jsonb),
                 quality_score=:quality_score, quality_reason=:quality_reason,
                 ai_summary=:ai_summary, ai_claims=CAST(:ai_claims AS jsonb),
                 ai_methods=CAST(:ai_methods AS jsonb), ai_limitations=CAST(:ai_limitations AS jsonb),
@@ -540,13 +558,13 @@ function save_source(array $source): array
         $stmt = db()->prepare(
             'INSERT INTO sources (
                 type,title,authors,year,publisher,journal,volume,issue,pages,doi,isbn,url,
-                accessed_at,raw_input,notes,citation_cache,quality_score,quality_reason,
+                accessed_at,raw_input,notes,lookup_trace,provenance_summary,body_text,body_fetched_at,body_source,citation_cache,quality_score,quality_reason,
                 ai_summary,ai_claims,ai_methods,ai_limitations,theme_labels,
                 origin_provider,origin_external_id,origin_updated_at,zotero_item_key,zotero_version,zotero_synced_at,
                 created_at,updated_at
             ) VALUES (
                 :type,:title,CAST(:authors AS jsonb),:year,:publisher,:journal,:volume,:issue,:pages,:doi,:isbn,:url,
-                :accessed_at,:raw_input,:notes,CAST(:citation_cache AS jsonb),:quality_score,:quality_reason,
+                :accessed_at,:raw_input,:notes,CAST(:lookup_trace AS jsonb),:provenance_summary,:body_text,NULLIF(:body_fetched_at, \'\')::timestamptz,:body_source,CAST(:citation_cache AS jsonb),:quality_score,:quality_reason,
                 :ai_summary,CAST(:ai_claims AS jsonb),CAST(:ai_methods AS jsonb),CAST(:ai_limitations AS jsonb),CAST(:theme_labels AS jsonb),
                 :origin_provider,:origin_external_id,NULLIF(:origin_updated_at, \'\')::timestamptz,:zotero_item_key,NULLIF(CAST(:zotero_version AS text), \'\')::bigint,NULLIF(:zotero_synced_at, \'\')::timestamptz,
                 :created_at,:updated_at

@@ -20,6 +20,7 @@ return [
     ],
     'ai' => [
         'chat_model' => getenv('EXLIBRIS_OPENAI_CHAT_MODEL') ?: 'gpt-4o-mini',
+        'reader_model' => getenv('EXLIBRIS_OPENAI_READER_MODEL') ?: (getenv('EXLIBRIS_OPENAI_CHAT_MODEL') ?: 'gpt-4o-mini'),
         'embedding_model' => getenv('EXLIBRIS_OPENAI_EMBED_MODEL') ?: 'text-embedding-3-small',
     ],
 ];

@@ -43,13 +43,15 @@ render_header('Add Source');
         </div>
         <label>Notes <textarea name="notes" rows="4"></textarea></label>
         <input type="hidden" name="raw_input">
+        <input type="hidden" name="provenance_summary">
+        <input type="hidden" name="lookup_trace_json">
         <input type="hidden" name="id">
         <div class="actions">
             <button id="save-source" class="btn" type="submit">Save Source</button>
         </div>
     </form>
 
-    <p id="dump-status" class="muted"></p>
+    <p id="app-status" class="muted"></p>
 
     <div id="suggestions-panel" class="card stack hidden">
         <p class="muted">Low confidence — multiple candidates found. Select one to fill the form, or continue editing manually.</p>
