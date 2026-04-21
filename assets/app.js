@@ -83,6 +83,68 @@
     if (el) el.textContent = value || "";
   }
 
+  function renderSemanticResults(results) {
+    const panel = qs("#semantic-results");
+    if (!panel) return;
+    panel.innerHTML = "";
+
+    const items = Array.isArray(results) ? results : [];
+    if (!items.length) {
+      panel.textContent = "No semantic matches yet.";
+      return;
+    }
+
+    items.forEach((item) => {
+      const source = item && typeof item === "object" ? (item.source || {}) : {};
+      const score = Number(item?.score || 0);
+      const title = String(source.title || "").trim() || "Untitled source";
+      const sourceId = Number(source.id || 0);
+      const year = String(source.year || "").trim();
+      const type = String(source.type || "").trim();
+      const authors = Array.isArray(source.authors) ? source.authors.filter(Boolean) : [];
+      const summaryBits = [];
+      if (authors.length) summaryBits.push(authors.slice(0, 3).join(", "));
+      if (year) summaryBits.push(year);
+      if (type) summaryBits.push(type);
+
+      const itemEl = document.createElement("article");
+      itemEl.className = "semantic-result-item";
+
+      const titleEl = document.createElement(sourceId > 0 ? "a" : "span");
+      titleEl.className = "semantic-result-title";
+      titleEl.textContent = title;
+      if (sourceId > 0) {
+        titleEl.href = `/source.php?id=${sourceId}`;
+      }
+      itemEl.appendChild(titleEl);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const scoreChip = document.createElement("span");
+      scoreChip.textContent = `Score ${score.toFixed(3)}`;
+      meta.appendChild(scoreChip);
+      summaryBits.forEach((bit) => {
+        const metaBit = document.createElement("span");
+        metaBit.textContent = bit;
+        meta.appendChild(metaBit);
+      });
+      itemEl.appendChild(meta);
+
+      const provenance = String(source.provenance_summary || "").trim();
+      const notes = String(source.notes || "").trim();
+      const bodyText = String(source.body_text || "").trim();
+      const excerpt = provenance || notes || (bodyText ? bodyText.slice(0, 220) + (bodyText.length > 220 ? "..." : "") : "");
+      if (excerpt) {
+        const summary = document.createElement("p");
+        summary.className = "semantic-result-summary";
+        summary.textContent = excerpt;
+        itemEl.appendChild(summary);
+      }
+
+      panel.appendChild(itemEl);
+    });
+  }
+
   function setStatus(value, isError) {
     const el = qs("#app-status");
     if (!el) return;
@@ -229,6 +291,8 @@
       notes: data.notes || "",
       raw_input: data.raw_input || "",
       provenance_summary: data.provenance_summary || "",
+      body_text: data.body_text || "",
+      body_source: data.body_source || "",
       lookup_trace: (() => {
         try {
           const parsed = JSON.parse(String(data.lookup_trace_json || "[]"));
@@ -259,6 +323,8 @@
     form.elements.url.value = source.url || "";
     if (form.elements.accessed_at) form.elements.accessed_at.value = source.accessed_at || "";
     form.elements.notes.value = source.notes || "";
+    if (form.elements.body_text) form.elements.body_text.value = source.body_text || "";
+    if (form.elements.body_source) form.elements.body_source.value = source.body_source || "";
     if (form.elements.provenance_summary) form.elements.provenance_summary.value = source.provenance_summary || "";
     if (form.elements.lookup_trace_json) {
       const trace = Array.isArray(source.lookup_trace) ? source.lookup_trace : [];
@@ -633,6 +699,8 @@
   }
 
   function wirePdfActions() {
+    const AI_CLEANUP_CONFIRM_THRESHOLD = 150000;
+
     qsa("[data-pdf-open-id]").forEach((button) => {
       button.addEventListener("click", async () => {
         const sourceId = Number(button.getAttribute("data-pdf-open-id") || 0);
@@ -668,7 +736,14 @@
     qsa("[data-body-reformat-id]").forEach((button) => {
       button.addEventListener("click", async () => {
         const sourceId = Number(button.getAttribute("data-body-reformat-id") || 0);
+        const bodyChars = Number(button.getAttribute("data-body-chars") || 0);
         if (!sourceId) return;
+        if (bodyChars >= AI_CLEANUP_CONFIRM_THRESHOLD) {
+          const wantsCleanup = window.confirm(
+            `This extracted text is very long (${bodyChars.toLocaleString()} characters), so AI cleanup may take longer and cost more. Continue?`
+          );
+          if (!wantsCleanup) return;
+        }
         await withBusyButton(button, "Cleaning...", async () => {
           try {
             const data = await postJson("/api/assistant.php", { action: "reformat_body_text", source_id: sourceId });
@@ -684,6 +759,237 @@
     });
   }
 
+  function markdownSegmentsText(segments) {
+    return segments.map((segment) => String(segment.text || "")).join("");
+  }
+
+  function parseInlineMarkdownViewer(text, classes = [], href = "") {
+    const value = String(text || "");
+    if (!value) return [];
+
+    const candidates = [
+      { type: "link", match: /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/.exec(value) },
+      { type: "code", match: /`([^`]+)`/.exec(value) },
+      { type: "strong", match: /\*\*([^\n]+?)\*\*/.exec(value) },
+    ].filter((candidate) => candidate.match);
+
+    if (!candidates.length) {
+      return [{ text: value, classes: classes.slice(), href }];
+    }
+
+    candidates.sort((left, right) => left.match.index - right.match.index);
+    const first = candidates[0];
+    const match = first.match;
+    const out = [];
+    const start = Number(match.index || 0);
+    const before = value.slice(0, start);
+    if (before) {
+      out.push({ text: before, classes: classes.slice(), href });
+    }
+
+    if (first.type === "link") {
+      out.push(...parseInlineMarkdownViewer(match[1], classes.slice(), match[2]));
+    } else if (first.type === "code") {
+      out.push({ text: match[1], classes: classes.concat("viewer-md-inline-code"), href });
+    } else if (first.type === "strong") {
+      out.push(...parseInlineMarkdownViewer(match[1], classes.concat("viewer-md-strong"), href));
+    }
+
+    const after = value.slice(start + match[0].length);
+    if (after) {
+      out.push(...parseInlineMarkdownViewer(after, classes.slice(), href));
+    }
+    return out;
+  }
+
+  function createViewerMarkdownBlock(className, text, options = {}) {
+    const segments = parseInlineMarkdownViewer(text);
+    return {
+      className,
+      marker: options.marker || "",
+      segments,
+      text: markdownSegmentsText(segments),
+    };
+  }
+
+  function hasViewerMarkdownSyntax(text) {
+    const value = String(text || "");
+    return /(^|\n)\s{0,3}(#{1,6})\s+\S/.test(value)
+      || /(^|\n)\s*[-*+]\s+\S/.test(value)
+      || /(^|\n)\s*\d+\.\s+\S/.test(value)
+      || /(^|\n)\s{0,3}>\s*\S/.test(value)
+      || /(^|\n)\s*```/.test(value)
+      || /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/.test(value)
+      || /\*\*([^\n]+?)\*\*/.test(value)
+      || /`([^`]+)`/.test(value);
+  }
+
+  function parseViewerMarkdown(rawText) {
+    const normalized = String(rawText || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (!hasViewerMarkdownSyntax(normalized)) {
+      const fallback = createViewerMarkdownBlock("viewer-md-block viewer-md-paragraph", normalized);
+      return { blocks: [fallback], plainText: fallback.text };
+    }
+    const lines = normalized.split("\n");
+    const blocks = [];
+    let paragraphLines = [];
+    let codeLines = [];
+    let inCodeFence = false;
+
+    const flushParagraph = () => {
+      if (!paragraphLines.length) return;
+      const paragraph = paragraphLines
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(" ");
+      if (paragraph) {
+        blocks.push(createViewerMarkdownBlock("viewer-md-block viewer-md-paragraph", paragraph));
+      }
+      paragraphLines = [];
+    };
+
+    const flushCodeBlock = () => {
+      blocks.push({
+        className: "viewer-md-block viewer-md-code-block",
+        marker: "",
+        segments: [{ text: codeLines.join("\n"), classes: ["viewer-md-code-text"], href: "" }],
+        text: codeLines.join("\n"),
+      });
+      codeLines = [];
+    };
+
+    lines.forEach((line) => {
+      if (/^\s*```/.test(line)) {
+        flushParagraph();
+        if (inCodeFence) {
+          flushCodeBlock();
+          inCodeFence = false;
+        } else {
+          inCodeFence = true;
+          codeLines = [];
+        }
+        return;
+      }
+
+      if (inCodeFence) {
+        codeLines.push(line);
+        return;
+      }
+
+      if (/^\s*$/.test(line)) {
+        flushParagraph();
+        return;
+      }
+
+      let match = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+      if (match) {
+        flushParagraph();
+        blocks.push(createViewerMarkdownBlock(`viewer-md-block viewer-md-heading viewer-md-heading-${Math.min(6, match[1].length)}`, match[2]));
+        return;
+      }
+
+      match = line.match(/^\s{0,3}>\s?(.*)$/);
+      if (match) {
+        flushParagraph();
+        blocks.push(createViewerMarkdownBlock("viewer-md-block viewer-md-blockquote", match[1]));
+        return;
+      }
+
+      match = line.match(/^\s*[-*+]\s+(.*)$/);
+      if (match) {
+        flushParagraph();
+        blocks.push(createViewerMarkdownBlock("viewer-md-block viewer-md-list-item", match[1], { marker: "•" }));
+        return;
+      }
+
+      match = line.match(/^\s*(\d+)\.\s+(.*)$/);
+      if (match) {
+        flushParagraph();
+        blocks.push(createViewerMarkdownBlock("viewer-md-block viewer-md-list-item viewer-md-ordered-item", match[2], { marker: match[1] + "." }));
+        return;
+      }
+
+      paragraphLines.push(line);
+    });
+
+    flushParagraph();
+    if (inCodeFence) {
+      flushCodeBlock();
+    }
+
+    return {
+      blocks,
+      plainText: blocks.map((block) => block.text).join("\n"),
+    };
+  }
+
+  function appendStyledViewerText(container, text, classes, href) {
+    if (!text) return;
+    if (href) {
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "viewer-md-link";
+      classes.forEach((className) => link.classList.add(className));
+      link.textContent = text;
+      container.appendChild(link);
+      return;
+    }
+
+    if (Array.isArray(classes) && classes.length) {
+      const span = document.createElement("span");
+      classes.forEach((className) => span.classList.add(className));
+      span.textContent = text;
+      container.appendChild(span);
+      return;
+    }
+
+    container.appendChild(document.createTextNode(text));
+  }
+
+  function appendViewerSegmentWithHighlights(container, segment, startOffset, notes, activeNoteId, onActivateNote) {
+    const segmentText = String(segment?.text || "");
+    if (!segmentText) return;
+
+    let localCursor = 0;
+    while (localCursor < segmentText.length) {
+      const absoluteOffset = startOffset + localCursor;
+      const overlappingNote = notes.find((note) => {
+        const noteStart = Number(note.start_offset || 0);
+        const noteEnd = Number(note.end_offset || 0);
+        return noteEnd > absoluteOffset && noteStart < startOffset + segmentText.length;
+      });
+
+      if (!overlappingNote) {
+        appendStyledViewerText(container, segmentText.slice(localCursor), segment.classes || [], segment.href || "");
+        return;
+      }
+
+      const noteStart = Number(overlappingNote.start_offset || 0);
+      const noteEnd = Number(overlappingNote.end_offset || 0);
+      if (noteStart > absoluteOffset) {
+        const plainChunkLength = Math.min(segmentText.length - localCursor, noteStart - absoluteOffset);
+        appendStyledViewerText(container, segmentText.slice(localCursor, localCursor + plainChunkLength), segment.classes || [], segment.href || "");
+        localCursor += plainChunkLength;
+        continue;
+      }
+
+      const highlightedLength = Math.min(segmentText.length - localCursor, noteEnd - absoluteOffset);
+      const mark = document.createElement("mark");
+      mark.className = "viewer-highlight";
+      const noteId = Number(overlappingNote.id || 0);
+      if (noteId === activeNoteId) {
+        mark.classList.add("is-active");
+      }
+      mark.setAttribute("data-note-id", String(noteId));
+      mark.addEventListener("click", () => onActivateNote(noteId));
+      appendStyledViewerText(mark, segmentText.slice(localCursor, localCursor + highlightedLength), segment.classes || [], segment.href || "");
+      container.appendChild(mark);
+      localCursor += highlightedLength;
+    }
+  }
+
   function wireAnnotationViewer() {
     const panel = qs("#viewer-text-panel");
     const stage = qs("#viewer-reading-stage");
@@ -694,7 +1000,8 @@
 
     const source = readJsonScript("viewer-source-data", {});
     const initialNotes = readJsonScript("viewer-notes-data", []);
-    const text = String(source?.body_text || "");
+    const markdownDoc = parseViewerMarkdown(String(source?.body_text || ""));
+    const text = markdownDoc.plainText;
     const selectedQuote = qs("#viewer-selected-quote");
     const noteInput = qs("#viewer-note-text");
     const tagsInput = qs("#viewer-note-tags");
@@ -779,31 +1086,32 @@
         .sort((a, b) => Number(a.start_offset || 0) - Number(b.start_offset || 0));
       let cursor = 0;
 
-      const appendPlain = (chunk) => {
-        if (!chunk) return;
-        panel.appendChild(document.createTextNode(chunk));
-      };
-
-      sortedNotes.forEach((note) => {
-        const start = Number(note.start_offset || 0);
-        const end = Number(note.end_offset || 0);
-        appendPlain(textSlice(text, cursor, start));
-        const mark = document.createElement("mark");
-        mark.className = "viewer-highlight";
-        if (Number(note.id || 0) === activeNoteId) {
-          mark.classList.add("is-active");
+      markdownDoc.blocks.forEach((block, blockIndex) => {
+        const blockEl = document.createElement("span");
+        blockEl.className = block.className || "viewer-md-block viewer-md-paragraph";
+        if (block.marker) {
+          blockEl.setAttribute("data-marker", block.marker);
         }
-        mark.setAttribute("data-note-id", String(note.id || 0));
-        mark.textContent = textSlice(text, start, end);
-        mark.addEventListener("click", () => {
-          activeNoteId = Number(note.id || 0);
-          renderViewer();
+        (Array.isArray(block.segments) ? block.segments : []).forEach((segment) => {
+          appendViewerSegmentWithHighlights(
+            blockEl,
+            segment,
+            cursor,
+            sortedNotes,
+            activeNoteId,
+            (noteId) => {
+              activeNoteId = noteId;
+              renderViewer();
+            }
+          );
+          cursor += String(segment.text || "").length;
         });
-        panel.appendChild(mark);
-        cursor = end;
+        panel.appendChild(blockEl);
+        if (blockIndex < markdownDoc.blocks.length - 1) {
+          panel.appendChild(document.createTextNode("\n"));
+          cursor += 1;
+        }
       });
-
-      appendPlain(textSlice(text, cursor, textLength(text)));
     };
 
     const renderNotes = () => {
@@ -1097,7 +1405,8 @@
     if (semanticBtn) {
       semanticBtn.addEventListener("click", async () => {
         try {
-          await runAssistant("semantic_search", { query: qs("#semantic-query")?.value || "", limit: 12 }, "#semantic-results");
+          const data = await postJson("/api/assistant.php", { action: "semantic_search", query: qs("#semantic-query")?.value || "", limit: 12 });
+          renderSemanticResults(data?.results || []);
         } catch (error) {
           setText("#semantic-results", error.message || "Search failed.");
         }
@@ -1175,6 +1484,7 @@
     const historyRefreshBtn = qs("#reader-history-refresh-btn");
     const loaderPre = qs("#reader-loader");
     const resultsPanel = qs("#reader-results-panel");
+    const includedSummary = qs("#reader-included-summary");
     const resultsPre = qs("#reader-results");
     const tracePanel = qs("#reader-trace-panel");
     const tracePre = qs("#reader-trace");
@@ -1311,6 +1621,7 @@
       if (!synthesis || typeof synthesis !== "object") {
         resultsPanel.classList.add("hidden");
         resultsPre.textContent = "";
+        if (includedSummary) includedSummary.innerHTML = "";
         return;
       }
       const lookup = sourceLookup instanceof Map ? sourceLookup : new Map();
@@ -1390,6 +1701,56 @@
       const authorText = Array.isArray(source?.authors) ? source.authors.slice(0, 2).join(", ") : "";
       const yearText = source?.year ? ` (${source.year})` : "";
       return `${title}${authorText ? ` — ${authorText}` : ""}${yearText}`;
+    };
+
+    const renderIncludedSourceSummary = (primarySources, expandedSources) => {
+      if (!includedSummary) return;
+      includedSummary.innerHTML = "";
+
+      const sections = [
+        { title: "Explicitly Included", sources: Array.isArray(primarySources) ? primarySources : [], empty: "None explicitly selected." },
+      ];
+      if (Array.isArray(expandedSources) && expandedSources.length) {
+        sections.push({ title: "Also Added For Context", sources: expandedSources, empty: "No extra sources were added." });
+      }
+
+      sections.forEach((section) => {
+        const wrap = document.createElement("article");
+        wrap.className = "reader-run-source-group";
+
+        const heading = document.createElement("h3");
+        heading.textContent = section.title;
+        wrap.appendChild(heading);
+
+        if (!section.sources.length) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = section.empty;
+          wrap.appendChild(empty);
+          includedSummary.appendChild(wrap);
+          return;
+        }
+
+        const list = document.createElement("div");
+        list.className = "stack";
+        section.sources.forEach((source) => {
+          const row = document.createElement("div");
+          row.className = "reader-run-source-item";
+          const sourceId = Number(source?.id || 0);
+          if (sourceId > 0) {
+            const link = document.createElement("a");
+            link.href = `/source.php?id=${sourceId}`;
+            link.className = "reader-source-ref";
+            link.textContent = sourceLabel(source);
+            row.appendChild(link);
+          } else {
+            row.textContent = sourceLabel(source);
+          }
+          list.appendChild(row);
+        });
+        wrap.appendChild(list);
+        includedSummary.appendChild(wrap);
+      });
     };
 
     const renderSelectedSources = () => {
@@ -1567,11 +1928,12 @@
       const runSources = Array.isArray(output.sources) ? output.sources : [];
       const lookup = await hydrateLookupForSynthesis(output.synthesis || {}, buildSourceLookup(runSources));
       renderSynthesis(output.synthesis || {}, lookup);
+      renderIncludedSourceSummary(output.primary_sources || [], output.expanded_sources || []);
       renderTrace(output.trace || [], output.token_usage || {});
       renderExternalCandidates(output?.synthesis?.external_candidates || []);
       if (contextInput) contextInput.value = String(run.input_text || "");
 
-      const runSourceIds = Array.isArray(output.source_ids) ? output.source_ids : [];
+      const runSourceIds = Array.isArray(output.selected_source_ids) ? output.selected_source_ids : (Array.isArray(output.source_ids) ? output.source_ids : []);
       selectedSources.clear();
       runSourceIds.forEach((id) => {
         const source = runSources.find((item) => Number(item?.id || 0) === Number(id)) || { id, title: `Source #${id}`, authors: [], year: "" };
@@ -1656,6 +2018,7 @@
         });
         const lookup = await hydrateLookupForSynthesis(data.synthesis || {}, buildSourceLookup(data.sources || []));
         renderSynthesis(data.synthesis || {}, lookup);
+        renderIncludedSourceSummary(data.primary_sources || [], data.expanded_sources || []);
         renderTrace(data.trace || [], data.token_usage || {});
         renderExternalCandidates(data.synthesis?.external_candidates || []);
         setStatus(`Reader complete (${Number(data.source_count || sourceIds.length)} source(s)).`);
@@ -1679,6 +2042,7 @@
         if (tracePanel) tracePanel.classList.add("hidden");
         if (externalPanel) externalPanel.classList.add("hidden");
         if (resultsPre) resultsPre.textContent = "";
+        if (includedSummary) includedSummary.innerHTML = "";
         if (tracePre) tracePre.textContent = "";
         if (externalList) externalList.innerHTML = "";
         stopLoader();

@@ -61,7 +61,12 @@ render_header('View Source');
                 <div class="row viewer-toolbar">
                     <h2>Extracted Text</h2>
                     <div class="actions viewer-controls">
-                        <button type="button" class="btn btn-copy" data-body-reformat-id="<?= (int) $source['id'] ?>">AI Clean Text</button>
+                        <button
+                            type="button"
+                            class="btn btn-copy"
+                            data-body-reformat-id="<?= (int) $source['id'] ?>"
+                            data-body-chars="<?= (int) mb_strlen($bodyText) ?>"
+                        >AI Clean Text</button>
                         <label for="viewer-font-family">
                             <span>Font</span>
                             <select id="viewer-font-family">

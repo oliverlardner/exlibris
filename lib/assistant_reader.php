@@ -15,19 +15,28 @@ function assistant_handle_reader_synthesis(array $payload): array
 
     $expandK = max(0, min(5, (int) ($payload['expand_k'] ?? 3)));
     $gathered = reader_gather($sourceIds, $context, $expandK);
-    $sources = is_array($gathered['all'] ?? null) ? $gathered['all'] : [];
+    $primarySources = is_array($gathered['primary'] ?? null) ? $gathered['primary'] : [];
+    $expandedSources = is_array($gathered['expanded'] ?? null) ? $gathered['expanded'] : [];
     $trace = is_array($gathered['trace'] ?? null) ? $gathered['trace'] : [];
-    if ($sources === []) {
+    if ($primarySources === [] && $expandedSources === []) {
         throw new RuntimeException('No matching sources found');
     }
 
-    foreach ($sources as &$source) {
+    foreach ($primarySources as &$source) {
         if (!is_array($source)) {
             continue;
         }
         reader_fetch_body($source, $trace);
     }
     unset($source);
+    foreach ($expandedSources as &$source) {
+        if (!is_array($source)) {
+            continue;
+        }
+        reader_fetch_body($source, $trace);
+    }
+    unset($source);
+    $sources = array_values(array_merge($primarySources, $expandedSources));
 
     $scholarlyCandidates = reader_scholarly_search($context, $sources);
     $trace[] = [
@@ -38,26 +47,36 @@ function assistant_handle_reader_synthesis(array $payload): array
             : 'No additional scholarly candidates found.',
     ];
 
-    $dossier = reader_build_dossier($sources, $scholarlyCandidates, $context);
+    $dossier = reader_build_dossier($primarySources, $expandedSources, $scholarlyCandidates, $context);
     $synthesis = reader_synthesize($dossier, $context, $trace);
     $usage = is_array($synthesis['usage'] ?? null) ? $synthesis['usage'] : [];
     if (isset($synthesis['usage'])) {
         unset($synthesis['usage']);
     }
 
-    $sourcesCompact = array_values(array_map(static function (array $source): array {
-        return [
-            'id' => (int) ($source['id'] ?? 0),
-            'title' => (string) ($source['title'] ?? ''),
-            'authors' => is_array($source['authors'] ?? null) ? $source['authors'] : [],
-            'year' => (string) ($source['year'] ?? ''),
-            'url' => (string) ($source['url'] ?? ''),
-        ];
-    }, $sources));
+    $compactSources = static function (array $sourcesList): array {
+        return array_values(array_map(static function (array $source): array {
+            return [
+                'id' => (int) ($source['id'] ?? 0),
+                'title' => (string) ($source['title'] ?? ''),
+                'authors' => is_array($source['authors'] ?? null) ? $source['authors'] : [],
+                'year' => (string) ($source['year'] ?? ''),
+                'url' => (string) ($source['url'] ?? ''),
+            ];
+        }, $sourcesList));
+    };
+
+    $sourcesCompact = $compactSources($sources);
+    $primaryCompact = $compactSources($primarySources);
+    $expandedCompact = $compactSources($expandedSources);
 
     return [
         'context' => $context,
         'sources' => $sourcesCompact,
+        'primary_sources' => $primaryCompact,
+        'expanded_sources' => $expandedCompact,
+        'selected_source_ids' => array_values(array_map(static fn (array $source): int => (int) ($source['id'] ?? 0), $primarySources)),
+        'expanded_source_ids' => array_values(array_map(static fn (array $source): int => (int) ($source['id'] ?? 0), $expandedSources)),
         'source_ids' => array_values(array_map(static fn (array $source): int => (int) ($source['id'] ?? 0), $sources)),
         'synthesis' => $synthesis,
         'trace' => $trace,

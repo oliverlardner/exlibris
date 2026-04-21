@@ -65,6 +65,7 @@ render_header('Reader');
 
     <article id="reader-results-panel" class="card stack hidden">
         <h2>Reader Synthesis</h2>
+        <div id="reader-included-summary" class="stack"></div>
         <pre id="reader-results" class="muted"></pre>
     </article>
 

@@ -163,8 +163,9 @@ a:hover {
 
 .nav {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
-  margin-right: auto;
 }
 
 .nav a::before {
@@ -173,6 +174,19 @@ a:hover {
 
 .nav a::after {
   content: " ]";
+}
+
+.header-citation-control {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: row;
+  gap: 0.45rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.header-citation-control select {
+  min-width: 6.5rem;
 }
 
 .page {
@@ -398,6 +412,36 @@ textarea.drop-active {
   color: var(--copy);
 }
 
+.semantic-results {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.semantic-result-item {
+  border-top: 1px solid color-mix(in srgb, var(--accent), transparent 82%);
+  padding-top: 0.75rem;
+}
+
+.semantic-result-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.semantic-result-title {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.semantic-result-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.semantic-result-summary {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+
 .viewer-layout {
   display: block;
 }
@@ -437,6 +481,74 @@ textarea.drop-active {
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 12px;
   min-width: 0;
+}
+
+.viewer-md-block {
+  display: block;
+}
+
+.viewer-md-heading {
+  font-weight: 600;
+}
+
+.viewer-md-heading-1 {
+  font-size: 1.8em;
+}
+
+.viewer-md-heading-2 {
+  font-size: 1.5em;
+}
+
+.viewer-md-heading-3 {
+  font-size: 1.25em;
+}
+
+.viewer-md-blockquote {
+  border-left: 2px solid color-mix(in srgb, var(--accent), transparent 35%);
+  padding-left: 0.7rem;
+  color: var(--muted);
+}
+
+.viewer-md-list-item {
+  padding-left: 1.3rem;
+  position: relative;
+}
+
+.viewer-md-list-item::before {
+  content: attr(data-marker) " ";
+  position: absolute;
+  left: 0;
+  color: var(--muted);
+}
+
+.viewer-md-strong {
+  font-weight: 600;
+}
+
+.viewer-md-inline-code,
+.viewer-md-code-text {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.viewer-md-inline-code {
+  background: color-mix(in srgb, var(--surface), white 6%);
+  padding: 0 0.2rem;
+}
+
+.viewer-md-code-block {
+  background: color-mix(in srgb, var(--surface), white 4%);
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 70%);
+  padding: 0.6rem 0.7rem;
+}
+
+.viewer-md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.viewer-md-link:hover {
+  color: var(--success);
 }
 
 .viewer-highlight {
@@ -540,6 +652,19 @@ textarea.drop-active {
   color: var(--success);
 }
 
+.reader-run-source-group {
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 78%);
+  padding: 0.65rem;
+}
+
+.reader-run-source-group h3 {
+  margin: 0 0 0.45rem;
+}
+
+.reader-run-source-item {
+  line-height: 1.5;
+}
+
 .reader-loader {
   color: var(--accent);
   white-space: pre;
@@ -578,7 +703,16 @@ label, summary,
     padding: 0.45rem 0;
   }
 
+  .nav {
+    width: 100%;
+  }
+
+  .header-citation-control {
+    order: 2;
+  }
+
   .header-projects-control {
+    order: 3;
     width: 100%;
     align-items: flex-start;
     flex-direction: column;

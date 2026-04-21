@@ -4,7 +4,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/lib/layout.php';
 
 ensure_defaults();
-$citationFormat = current_citation_format();
 $themeMode = current_theme_mode();
 $includePages = include_pages_in_citations();
 $openAiManagedByEnv = trim((string) getenv('EXLIBRIS_OPENAI_API_KEY')) !== '';
@@ -24,13 +23,7 @@ render_header('Settings');
 
     <article class="card stack">
         <h2>Citation Format</h2>
-        <p class="muted">Default format is APA, but you can switch this anytime.</p>
-        <label for="citation-format">Default citation style</label>
-        <select id="citation-format">
-            <option value="apa" <?= $citationFormat === 'apa' ? 'selected' : '' ?>>APA</option>
-            <option value="mla" <?= $citationFormat === 'mla' ? 'selected' : '' ?>>MLA</option>
-            <option value="chicago" <?= $citationFormat === 'chicago' ? 'selected' : '' ?>>Chicago</option>
-        </select>
+        <p class="muted">Change citation style from the header on any page. Page-number formatting still lives here.</p>
         <label for="include-pages">Include page numbers in formatted citations</label>
         <select id="include-pages">
             <option value="1" <?= $includePages ? 'selected' : '' ?>>Yes</option>

@@ -58,7 +58,6 @@ render_header('Bibliography');
             <a class="btn" href="/dump.php">Add Source</a>
         </div>
     </div>
-    <p class="muted">Current citation style: <strong><?= h(strtoupper($format)) ?></strong></p>
 
     <div class="card">
         <label for="search-input">Search</label>
@@ -78,7 +77,7 @@ render_header('Bibliography');
         <div class="actions">
             <button type="button" class="btn btn-load" id="semantic-search-btn">Search</button>
         </div>
-        <pre id="semantic-results" class="muted"></pre>
+        <div id="semantic-results" class="semantic-results muted"></div>
     </div>
 
     <div class="card stack">

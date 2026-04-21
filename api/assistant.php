@@ -278,7 +278,7 @@ try {
         } catch (RuntimeException $e) {
             json_response(['ok' => false, 'error' => $e->getMessage()], 404);
         }
-        $primarySourceId = (int) (($runOutput['source_ids'][0] ?? 0) ?: 0);
+        $primarySourceId = (int) ((($runOutput['selected_source_ids'][0] ?? 0) ?: ($runOutput['source_ids'][0] ?? 0)) ?: 0);
         assistant_store_run(
             $action,
             $primarySourceId > 0 ? $primarySourceId : null,
@@ -292,6 +292,10 @@ try {
             'token_usage' => $runOutput['token_usage'] ?? [],
             'source_count' => count((array) ($runOutput['source_ids'] ?? [])),
             'sources' => $runOutput['sources'] ?? [],
+            'primary_sources' => $runOutput['primary_sources'] ?? [],
+            'expanded_sources' => $runOutput['expanded_sources'] ?? [],
+            'selected_source_ids' => $runOutput['selected_source_ids'] ?? [],
+            'expanded_source_ids' => $runOutput['expanded_source_ids'] ?? [],
         ]);
     }
 

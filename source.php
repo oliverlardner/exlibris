@@ -46,7 +46,7 @@ render_header('Source');
     </div>
 
     <article class="card">
-        <h2>Current Citation (<?= h(strtoupper($format)) ?>)</h2>
+        <h2>Citation</h2>
         <p class="citation"><?= h($citation) ?></p>
         <div class="meta">
             <?php if (($source['origin_provider'] ?? '') === 'zotero'): ?><span class="badge-zotero">Zotero Imported</span><?php endif; ?>
@@ -61,7 +61,12 @@ render_header('Source');
             <?php endif; ?>
             <?php if ($bodyText !== ''): ?>
                 <a class="btn btn-secondary" href="/view.php?id=<?= (int) $source['id'] ?>">View Text</a>
-                <button type="button" class="btn btn-copy" data-body-reformat-id="<?= (int) $source['id'] ?>">AI Clean Text</button>
+                <button
+                    type="button"
+                    class="btn btn-copy"
+                    data-body-reformat-id="<?= (int) $source['id'] ?>"
+                    data-body-chars="<?= (int) mb_strlen($bodyText) ?>"
+                >AI Clean Text</button>
             <?php endif; ?>
             <button type="button" class="btn btn-load" id="zotero-push-source-btn" data-source-id="<?= (int) $source['id'] ?>">Push Zotero</button>
         </div>
@@ -106,7 +111,12 @@ render_header('Source');
             <pre><?= h($bodyPreview . ($bodyChars > mb_strlen($bodyPreview) ? "\n\n[truncated]" : '')) ?></pre>
             <div class="actions">
                 <a class="btn btn-secondary" href="/view.php?id=<?= (int) $source['id'] ?>">View Text</a>
-                <button type="button" class="btn btn-copy" data-body-reformat-id="<?= (int) $source['id'] ?>">AI Clean Text</button>
+                <button
+                    type="button"
+                    class="btn btn-copy"
+                    data-body-reformat-id="<?= (int) $source['id'] ?>"
+                    data-body-chars="<?= (int) mb_strlen($bodyText) ?>"
+                >AI Clean Text</button>
             </div>
         </article>
     <?php endif; ?>
@@ -132,7 +142,11 @@ render_header('Source');
             <label>Collections (comma-separated) <input name="project_names" list="project-name-options" value="<?= h(implode(', ', $projectNames)) ?>"></label>
         </div>
         <label>Notes <textarea name="notes" rows="4"><?= h($source['notes']) ?></textarea></label>
+        <label>Extracted Text
+            <textarea name="body_text" rows="18" placeholder="Paste or replace the extracted text here."><?= h($bodyText) ?></textarea>
+        </label>
         <input type="hidden" name="raw_input" value="<?= h($source['raw_input']) ?>">
+        <input type="hidden" name="body_source" value="<?= h((string) ($source['body_source'] ?? '')) ?>">
         <input type="hidden" name="provenance_summary" value="<?= h((string) ($source['provenance_summary'] ?? '')) ?>">
         <input type="hidden" name="lookup_trace_json" value="<?= h(json_encode($source['lookup_trace'] ?? [], JSON_UNESCAPED_UNICODE)) ?>">
         <input type="hidden" name="id" value="<?= (int) $source['id'] ?>">

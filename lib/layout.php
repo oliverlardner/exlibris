@@ -33,6 +33,14 @@ function render_header(string $title): void
                 <a href="/digest.php">Digest</a>
                 <a href="/settings.php">Settings</a>
             </nav>
+            <label class="header-citation-control" for="citation-format">
+                <span>Style</span>
+                <select id="citation-format" aria-label="Citation style">
+                    <option value="apa" <?= $format === 'apa' ? 'selected' : '' ?>>APA</option>
+                    <option value="mla" <?= $format === 'mla' ? 'selected' : '' ?>>MLA</option>
+                    <option value="chicago" <?= $format === 'chicago' ? 'selected' : '' ?>>Chicago</option>
+                </select>
+            </label>
             <div class="header-projects-control">
                 <span>Current Projects</span>
                 <div class="header-projects-editor">

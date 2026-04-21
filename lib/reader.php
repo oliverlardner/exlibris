@@ -16,7 +16,6 @@ const READER_MAX_SCHOLARLY = 10;
 
 function reader_gather(?array $sourceIds, string $context, int $expandK = READER_MAX_EXPANSION): array
 {
-    $expandK = max(0, min(READER_MAX_EXPANSION, $expandK));
     $primary = [];
     $seenIds = [];
     $trace = [];
@@ -42,32 +41,10 @@ function reader_gather(?array $sourceIds, string $context, int $expandK = READER
     ];
 
     $expanded = [];
-    $query = trim($context);
-    if ($query !== '' && (count($primary) < 3 || $primary === [])) {
-        $candidates = semantic_search_sources($query, max(1, $expandK + count($primary)));
-        foreach ($candidates as $match) {
-            $source = is_array($match['source'] ?? null) ? $match['source'] : null;
-            if (!is_array($source)) {
-                continue;
-            }
-            $id = (int) ($source['id'] ?? 0);
-            if ($id <= 0 || isset($seenIds[$id])) {
-                continue;
-            }
-            $expanded[] = $source;
-            $seenIds[$id] = true;
-            if (count($expanded) >= $expandK) {
-                break;
-            }
-        }
-    }
-
     $trace[] = [
         'step' => 'reader_semantic_expand',
-        'status' => $expanded !== [] ? 'success' : 'no_result',
-        'detail' => $expanded !== []
-            ? 'Added ' . count($expanded) . ' semantically related source(s).'
-            : 'No semantic expansion candidates were added.',
+        'status' => 'skipped',
+        'detail' => 'Semantic source expansion is disabled. Reader synthesis uses only explicitly selected source(s).',
     ];
 
     return [
@@ -240,6 +217,9 @@ function reader_synthesize(array $dossier, string $context, array &$trace): arra
     $system = 'You are an L1 research reader. Compress context for a human researcher. '
         . 'Use extractive evidence from the provided source dossier where possible. '
         . 'If introducing facts from outside the dossier, include them as external_candidates with a URL. '
+        . 'Treat selected_sources as the only texts being evaluated. Verdict, verdict_reason, why_now, claims, evidence, connections, open_questions, and cautions must be based only on selected_sources. '
+        . 'Do not use scholarly_candidates or any external material to justify the verdict or the reader notes. Those are suggestions only and belong only in external_candidates. '
+        . 'Be explicit when the selected_sources do not actually bear on the stated research context. '
         . 'Prefer concise, decision-useful output.';
     $user = "Research context:\n" . ($context !== '' ? $context : '(none provided)')
         . "\n\nDossier JSON:\n" . json_encode($dossier, JSON_UNESCAPED_UNICODE);
@@ -264,7 +244,7 @@ function reader_synthesize(array $dossier, string $context, array &$trace): arra
 
     $fallback = openai_json_response(
         'Return JSON with keys verdict, verdict_reason, why_now, claims, evidence, connections, open_questions, cautions, external_candidates. '
-        . 'Each key must exist. Keep concise and grounded in the provided dossier.',
+        . 'Each key must exist. Ground verdict and reader notes only in selected_sources. Use scholarly_candidates only as external_candidates suggestions.',
         $user
     );
     if (!is_array($fallback)) {
@@ -278,38 +258,48 @@ function reader_synthesize(array $dossier, string $context, array &$trace): arra
     return $normalized;
 }
 
-function reader_build_dossier(array $sources, array $scholarlyCandidates, string $context): array
+function reader_build_dossier(array $primarySources, array $expandedSources, array $scholarlyCandidates, string $context): array
 {
-    $packedSources = [];
-    foreach ($sources as $source) {
-        if (!is_array($source)) {
-            continue;
+    $packSources = static function (array $sources): array {
+        $packedSources = [];
+        foreach ($sources as $source) {
+            if (!is_array($source)) {
+                continue;
+            }
+            $packedSources[] = [
+                'id' => (int) ($source['id'] ?? 0),
+                'type' => (string) ($source['type'] ?? ''),
+                'title' => (string) ($source['title'] ?? ''),
+                'authors' => is_array($source['authors'] ?? null) ? array_values(array_map('strval', $source['authors'])) : [],
+                'year' => (string) ($source['year'] ?? ''),
+                'publisher' => (string) ($source['publisher'] ?? ''),
+                'journal' => (string) ($source['journal'] ?? ''),
+                'doi' => (string) ($source['doi'] ?? ''),
+                'isbn' => (string) ($source['isbn'] ?? ''),
+                'url' => (string) ($source['url'] ?? ''),
+                'notes' => (string) ($source['notes'] ?? ''),
+                'provenance_summary' => (string) ($source['provenance_summary'] ?? ''),
+                'lookup_trace' => is_array($source['lookup_trace'] ?? null) ? $source['lookup_trace'] : [],
+                'ai_summary' => (string) ($source['ai_summary'] ?? ''),
+                'ai_claims' => is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [],
+                'ai_methods' => is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [],
+                'ai_limitations' => is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [],
+                'body_excerpt' => mb_substr((string) ($source['body_text'] ?? ''), 0, READER_BODY_CHAR_LIMIT),
+                'body_fetched_at' => (string) ($source['body_fetched_at'] ?? ''),
+            ];
         }
-        $packedSources[] = [
-            'id' => (int) ($source['id'] ?? 0),
-            'type' => (string) ($source['type'] ?? ''),
-            'title' => (string) ($source['title'] ?? ''),
-            'authors' => is_array($source['authors'] ?? null) ? array_values(array_map('strval', $source['authors'])) : [],
-            'year' => (string) ($source['year'] ?? ''),
-            'publisher' => (string) ($source['publisher'] ?? ''),
-            'journal' => (string) ($source['journal'] ?? ''),
-            'doi' => (string) ($source['doi'] ?? ''),
-            'isbn' => (string) ($source['isbn'] ?? ''),
-            'url' => (string) ($source['url'] ?? ''),
-            'notes' => (string) ($source['notes'] ?? ''),
-            'provenance_summary' => (string) ($source['provenance_summary'] ?? ''),
-            'lookup_trace' => is_array($source['lookup_trace'] ?? null) ? $source['lookup_trace'] : [],
-            'ai_summary' => (string) ($source['ai_summary'] ?? ''),
-            'ai_claims' => is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [],
-            'ai_methods' => is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [],
-            'ai_limitations' => is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [],
-            'body_excerpt' => mb_substr((string) ($source['body_text'] ?? ''), 0, READER_BODY_CHAR_LIMIT),
-            'body_fetched_at' => (string) ($source['body_fetched_at'] ?? ''),
-        ];
-    }
+
+        return $packedSources;
+    };
+
+    $packedPrimary = $packSources($primarySources);
+    $packedExpanded = $packSources($expandedSources);
+    $packedSources = array_values(array_merge($packedPrimary, $packedExpanded));
 
     return [
         'context' => trim($context),
+        'selected_sources' => $packedPrimary,
+        'expanded_sources' => $packedExpanded,
         'sources' => $packedSources,
         'scholarly_candidates' => array_values($scholarlyCandidates),
     ];
