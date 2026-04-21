@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/http.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/formatter.php';
+require_once __DIR__ . '/pdf.php';
 
 function zotero_config(): array
 {
@@ -92,7 +93,7 @@ function zotero_fetch_collections(): array
         );
 
         try {
-            $batch = http_get_json($url, zotero_headers());
+            $batch = http_get_json($url, zotero_headers(), 12, 2);
         } catch (Throwable $e) {
             throw new RuntimeException('Zotero collections request failed. Check library type/id and API key permissions. ' . $e->getMessage());
         }
@@ -132,6 +133,64 @@ function zotero_fetch_item(string $itemKey): ?array
     }
 
     return is_array($item) ? $item : null;
+}
+
+function zotero_fetch_item_children(string $itemKey): array
+{
+    $itemKey = trim($itemKey);
+    if ($itemKey === '') {
+        return [];
+    }
+    $url = sprintf(
+        'https://api.zotero.org/%s/items/%s/children?format=json',
+        zotero_library_path(),
+        rawurlencode($itemKey)
+    );
+    try {
+        $children = http_get_json($url, zotero_headers(), 20, 1);
+    } catch (Throwable) {
+        return [];
+    }
+
+    return is_array($children) ? $children : [];
+}
+
+function zotero_resolve_pdf_path_from_item(array $item): string
+{
+    $itemKey = trim((string) ($item['key'] ?? ''));
+    if ($itemKey === '') {
+        return '';
+    }
+
+    $path = pdf_resolve_path($itemKey);
+    if ($path !== '') {
+        return $path;
+    }
+
+    $children = zotero_fetch_item_children($itemKey);
+    foreach ($children as $child) {
+        if (!is_array($child)) {
+            continue;
+        }
+        $data = is_array($child['data'] ?? null) ? $child['data'] : [];
+        if (strtolower((string) ($data['itemType'] ?? '')) !== 'attachment') {
+            continue;
+        }
+        $contentType = strtolower((string) ($data['contentType'] ?? ''));
+        if ($contentType !== 'application/pdf') {
+            continue;
+        }
+        $attachmentKey = trim((string) ($child['key'] ?? ''));
+        if ($attachmentKey === '') {
+            continue;
+        }
+        $attachmentPath = pdf_resolve_path($attachmentKey);
+        if ($attachmentPath !== '') {
+            return $attachmentPath;
+        }
+    }
+
+    return '';
 }
 
 function zotero_get_or_create_collection_key(string $collectionName): string
@@ -259,6 +318,7 @@ function zotero_item_to_source(array $item): array
         'zotero_item_key' => (string) ($item['key'] ?? ''),
         'zotero_version' => isset($item['version']) ? (int) $item['version'] : null,
         'zotero_synced_at' => gmdate('c'),
+        'pdf_path' => zotero_resolve_pdf_path_from_item($item),
         'project_external_keys' => is_array($data['collections'] ?? null) ? array_values(array_map('strval', $data['collections'])) : [],
     ];
 }

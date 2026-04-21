@@ -10,7 +10,10 @@ function db(): PDO
 
     $config = require __DIR__ . '/../config.php';
     $db = $config['db'];
-    $dsn = sprintf('pgsql:host=%s;port=%d;dbname=%s', $db['host'], $db['port'], $db['name']);
+    // macOS + libpq + php-fpm can crash during implicit Kerberos/GSS
+    // negotiation in PQconnectdb on local connections. Disable GSS
+    // transport explicitly for this app to avoid 502s from worker segfaults.
+    $dsn = sprintf('pgsql:host=%s;port=%d;dbname=%s;gssencmode=disable', $db['host'], $db['port'], $db['name']);
 
     $pdo = new PDO(
         $dsn,
@@ -89,6 +92,7 @@ function ensure_schema(PDO $pdo): void
             zotero_item_key TEXT NOT NULL DEFAULT \'\',
             zotero_version BIGINT NULL,
             zotero_synced_at TIMESTAMPTZ NULL,
+            pdf_path TEXT NOT NULL DEFAULT \'\',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )'
@@ -102,6 +106,7 @@ function ensure_schema(PDO $pdo): void
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS zotero_item_key TEXT NOT NULL DEFAULT \'\'');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS zotero_version BIGINT NULL');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS zotero_synced_at TIMESTAMPTZ NULL');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS pdf_path TEXT NOT NULL DEFAULT \'\'');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_text TEXT NOT NULL DEFAULT \'\'');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_fetched_at TIMESTAMPTZ NULL');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_source TEXT NOT NULL DEFAULT \'\'');
@@ -148,6 +153,20 @@ function ensure_schema(PDO $pdo): void
             digest_text TEXT NOT NULL,
             digest_json JSONB NOT NULL DEFAULT \'{}\'::jsonb,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS source_notes (
+            id BIGSERIAL PRIMARY KEY,
+            source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            quote_text TEXT NOT NULL DEFAULT \'\',
+            start_offset INTEGER NOT NULL DEFAULT 0,
+            end_offset INTEGER NOT NULL DEFAULT 0,
+            note_text TEXT NOT NULL DEFAULT \'\',
+            tag_labels JSONB NOT NULL DEFAULT \'[]\'::jsonb,
+            project_ids JSONB NOT NULL DEFAULT \'[]\'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )'
     );
 
@@ -432,6 +451,37 @@ function projects_for_source_ids(array $sourceIds): array
     return $out;
 }
 
+function source_note_counts_for_source_ids(array $sourceIds): array
+{
+    $ids = array_values(array_unique(array_filter(array_map('intval', $sourceIds), static fn (int $id): bool => $id > 0)));
+    if ($ids === []) {
+        return [];
+    }
+
+    $params = [];
+    $holders = [];
+    foreach ($ids as $idx => $id) {
+        $key = ':id' . $idx;
+        $holders[] = $key;
+        $params['id' . $idx] = $id;
+    }
+
+    $sql = 'SELECT source_id, COUNT(*) AS note_count
+            FROM source_notes
+            WHERE source_id IN (' . implode(', ', $holders) . ')
+            GROUP BY source_id';
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll() ?: [];
+
+    $out = [];
+    foreach ($rows as $row) {
+        $out[(int) ($row['source_id'] ?? 0)] = (int) ($row['note_count'] ?? 0);
+    }
+
+    return $out;
+}
+
 function get_source(int $id): ?array
 {
     $stmt = db()->prepare('SELECT * FROM sources WHERE id = :id LIMIT 1');
@@ -526,6 +576,7 @@ function save_source(array $source): array
         'zotero_item_key' => (string) $pick('zotero_item_key', ''),
         'zotero_version' => $pick('zotero_version', null),
         'zotero_synced_at' => (string) $pick('zotero_synced_at', ''),
+        'pdf_path' => (string) $pick('pdf_path', ''),
         'updated_at' => $now,
     ];
 
@@ -548,6 +599,7 @@ function save_source(array $source): array
                 zotero_item_key=:zotero_item_key,
                 zotero_version=NULLIF(CAST(:zotero_version AS text), \'\')::bigint,
                 zotero_synced_at=NULLIF(:zotero_synced_at, \'\')::timestamptz,
+                pdf_path=:pdf_path,
                 updated_at=:updated_at
              WHERE id=:id'
         );
@@ -561,12 +613,14 @@ function save_source(array $source): array
                 accessed_at,raw_input,notes,lookup_trace,provenance_summary,body_text,body_fetched_at,body_source,citation_cache,quality_score,quality_reason,
                 ai_summary,ai_claims,ai_methods,ai_limitations,theme_labels,
                 origin_provider,origin_external_id,origin_updated_at,zotero_item_key,zotero_version,zotero_synced_at,
+                pdf_path,
                 created_at,updated_at
             ) VALUES (
                 :type,:title,CAST(:authors AS jsonb),:year,:publisher,:journal,:volume,:issue,:pages,:doi,:isbn,:url,
                 :accessed_at,:raw_input,:notes,CAST(:lookup_trace AS jsonb),:provenance_summary,:body_text,NULLIF(:body_fetched_at, \'\')::timestamptz,:body_source,CAST(:citation_cache AS jsonb),:quality_score,:quality_reason,
                 :ai_summary,CAST(:ai_claims AS jsonb),CAST(:ai_methods AS jsonb),CAST(:ai_limitations AS jsonb),CAST(:theme_labels AS jsonb),
                 :origin_provider,:origin_external_id,NULLIF(:origin_updated_at, \'\')::timestamptz,:zotero_item_key,NULLIF(CAST(:zotero_version AS text), \'\')::bigint,NULLIF(:zotero_synced_at, \'\')::timestamptz,
+                :pdf_path,
                 :created_at,:updated_at
             ) RETURNING id'
         );
@@ -629,4 +683,150 @@ function source_row_to_markdown_input(array $row): array
         'notes' => (string) ($row['notes'] ?? ''),
         'raw_input' => (string) ($row['raw_input'] ?? ''),
     ];
+}
+
+function source_note_to_array(array $row): array
+{
+    $decodeArray = static function (mixed $value): array {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return [];
+    };
+
+    return [
+        'id' => (int) ($row['id'] ?? 0),
+        'source_id' => (int) ($row['source_id'] ?? 0),
+        'quote_text' => (string) ($row['quote_text'] ?? ''),
+        'start_offset' => max(0, (int) ($row['start_offset'] ?? 0)),
+        'end_offset' => max(0, (int) ($row['end_offset'] ?? 0)),
+        'note_text' => (string) ($row['note_text'] ?? ''),
+        'tag_labels' => array_values(array_filter(array_map('strval', $decodeArray($row['tag_labels'] ?? [])))),
+        'project_ids' => array_values(array_filter(array_map('intval', $decodeArray($row['project_ids'] ?? [])), static fn (int $id): bool => $id > 0)),
+        'created_at' => (string) ($row['created_at'] ?? ''),
+        'updated_at' => (string) ($row['updated_at'] ?? ''),
+    ];
+}
+
+function list_source_notes(int $sourceId): array
+{
+    if ($sourceId <= 0) {
+        return [];
+    }
+    $stmt = db()->prepare('SELECT * FROM source_notes WHERE source_id = :source_id ORDER BY start_offset ASC, id ASC');
+    $stmt->execute(['source_id' => $sourceId]);
+    $rows = $stmt->fetchAll() ?: [];
+
+    return array_values(array_map(static fn (array $row): array => source_note_to_array($row), $rows));
+}
+
+function get_source_note(int $noteId): ?array
+{
+    if ($noteId <= 0) {
+        return null;
+    }
+    $stmt = db()->prepare('SELECT * FROM source_notes WHERE id = :id LIMIT 1');
+    $stmt->execute(['id' => $noteId]);
+    $row = $stmt->fetch();
+
+    return is_array($row) ? source_note_to_array($row) : null;
+}
+
+function create_source_note(array $note): array
+{
+    $sourceId = (int) ($note['source_id'] ?? 0);
+    if ($sourceId <= 0) {
+        throw new RuntimeException('Valid source_id is required.');
+    }
+    $source = get_source($sourceId);
+    if (!is_array($source)) {
+        throw new RuntimeException('Source not found.');
+    }
+    $bodyText = (string) ($source['body_text'] ?? '');
+    if ($bodyText === '') {
+        throw new RuntimeException('Source has no extracted text to annotate.');
+    }
+
+    $startOffset = max(0, (int) ($note['start_offset'] ?? 0));
+    $endOffset = max(0, (int) ($note['end_offset'] ?? 0));
+    if ($endOffset <= $startOffset) {
+        throw new RuntimeException('Annotation range is invalid.');
+    }
+    $bodyLength = mb_strlen($bodyText);
+    if ($endOffset > $bodyLength) {
+        throw new RuntimeException('Annotation range exceeds source text length.');
+    }
+
+    $projectIds = $note['project_ids'] ?? [];
+    if (!is_array($projectIds)) {
+        $projectIds = [];
+    }
+    $projectIds = array_values(array_unique(array_filter(array_map('intval', $projectIds), static fn (int $id): bool => $id > 0)));
+
+    $tagLabels = $note['tag_labels'] ?? [];
+    if (!is_array($tagLabels)) {
+        $tagLabels = [];
+    }
+    $tagLabels = array_values(array_unique(array_filter(array_map(static fn (mixed $value): string => trim((string) $value), $tagLabels))));
+
+    $quoteText = trim((string) ($note['quote_text'] ?? ''));
+    if ($quoteText === '') {
+        $quoteText = mb_substr($bodyText, $startOffset, $endOffset - $startOffset);
+    }
+    $noteText = trim((string) ($note['note_text'] ?? ''));
+    if ($quoteText === '' || $noteText === '') {
+        throw new RuntimeException('Both highlighted text and note text are required.');
+    }
+
+    foreach (list_source_notes($sourceId) as $existing) {
+        $existingStart = (int) ($existing['start_offset'] ?? 0);
+        $existingEnd = (int) ($existing['end_offset'] ?? 0);
+        if ($startOffset < $existingEnd && $endOffset > $existingStart) {
+            throw new RuntimeException('Highlights cannot overlap existing notes yet.');
+        }
+    }
+
+    $now = gmdate('c');
+    $stmt = db()->prepare(
+        'INSERT INTO source_notes (
+            source_id, quote_text, start_offset, end_offset, note_text, tag_labels, project_ids, created_at, updated_at
+        ) VALUES (
+            :source_id, :quote_text, :start_offset, :end_offset, :note_text, CAST(:tag_labels AS jsonb), CAST(:project_ids AS jsonb), :created_at, :updated_at
+        ) RETURNING *'
+    );
+    $stmt->execute([
+        'source_id' => $sourceId,
+        'quote_text' => $quoteText,
+        'start_offset' => $startOffset,
+        'end_offset' => $endOffset,
+        'note_text' => $noteText,
+        'tag_labels' => json_encode($tagLabels, JSON_UNESCAPED_UNICODE),
+        'project_ids' => json_encode($projectIds, JSON_UNESCAPED_UNICODE),
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        throw new RuntimeException('Failed to create source note.');
+    }
+
+    return source_note_to_array($row);
+}
+
+function delete_source_note(int $noteId): bool
+{
+    if ($noteId <= 0) {
+        return false;
+    }
+    $stmt = db()->prepare('DELETE FROM source_notes WHERE id = :id');
+    $stmt->execute(['id' => $noteId]);
+
+    return $stmt->rowCount() > 0;
 }

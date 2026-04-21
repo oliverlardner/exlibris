@@ -131,6 +131,48 @@ try {
         json_response(['ok' => true, 'annotation' => $response]);
     }
 
+    if ($action === 'reformat_body_text') {
+        $sourceId = (int) ($payload['source_id'] ?? 0);
+        $row = get_source($sourceId);
+        if (!is_array($row)) {
+            json_response(['ok' => false, 'error' => 'Source not found'], 404);
+        }
+        if (effective_openai_api_key() === '') {
+            json_response(['ok' => false, 'error' => 'OpenAI API key is not configured. Add it in Settings first.'], 503);
+        }
+
+        $source = source_to_array($row);
+        $existingBodyText = trim((string) ($source['body_text'] ?? ''));
+        if ($existingBodyText === '') {
+            json_response(['ok' => false, 'error' => 'Source has no extracted text to reformat.'], 422);
+        }
+
+        $response = openai_reformat_extracted_text($source);
+        if (!is_array($response) || trim((string) ($response['body_text'] ?? '')) === '') {
+            json_response(['ok' => false, 'error' => 'AI reformatting did not return cleaned text.'], 502);
+        }
+
+        $existingBodySource = trim((string) ($source['body_source'] ?? ''));
+        $source['body_text'] = (string) $response['body_text'];
+        $source['body_fetched_at'] = gmdate('c');
+        $source['body_source'] = str_contains($existingBodySource, 'ai_cleaned')
+            ? $existingBodySource
+            : ($existingBodySource !== '' ? ($existingBodySource . '+ai_cleaned') : 'ai_cleaned');
+        save_source($source);
+
+        assistant_store_run($action, $sourceId, $source['title'], $response);
+        json_response([
+            'ok' => true,
+            'reformatted' => [
+                'change_summary' => (string) ($response['change_summary'] ?? ''),
+                'input_truncated' => (bool) ($response['input_truncated'] ?? false),
+                'original_chars' => (int) ($response['original_chars'] ?? 0),
+                'cleaned_chars' => (int) ($response['cleaned_chars'] ?? 0),
+            ],
+            'body_chars' => mb_strlen((string) $source['body_text']),
+        ]);
+    }
+
     if ($action === 'cluster_themes') {
         $rows = list_sources();
         $clusters = [];

@@ -8,7 +8,9 @@ ensure_defaults();
 $format = current_citation_format();
 $rows = list_sources();
 $allProjects = list_projects();
-$projectMap = projects_for_source_ids(array_values(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $rows)));
+$sourceIds = array_values(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $rows));
+$projectMap = projects_for_source_ids($sourceIds);
+$noteCountMap = source_note_counts_for_source_ids($sourceIds);
 $entries = [];
 
 foreach ($rows as $row) {
@@ -34,6 +36,7 @@ foreach ($rows as $row) {
         'citation' => $citation,
         'search' => $search,
         'projects' => $projectMap[(int) ($source['id'] ?? 0)] ?? [],
+        'note_count' => (int) ($noteCountMap[(int) ($source['id'] ?? 0)] ?? 0),
     ];
 }
 
@@ -103,7 +106,14 @@ render_header('Bibliography');
             $citation = (string) $entry['citation'];
             $search = (string) $entry['search'];
             $projects = is_array($entry['projects'] ?? null) ? $entry['projects'] : [];
+            $noteCount = (int) ($entry['note_count'] ?? 0);
             $safeUrl = safe_external_url((string) ($source['url'] ?? ''));
+            $hasPdf = trim((string) ($source['pdf_path'] ?? '')) !== '';
+            $hasExtractedText = trim((string) ($source['body_text'] ?? '')) !== '';
+            $title = $source['title'] !== '' ? $source['title'] : 'Untitled source';
+            $titleHref = $hasExtractedText
+                ? '/view.php?id=' . (int) ($source['id'] ?? 0)
+                : $safeUrl;
             $projectIds = implode(',', array_values(array_filter(array_map(
                 static fn (array $project): string => (string) (int) ($project['id'] ?? 0),
                 $projects
@@ -117,7 +127,48 @@ render_header('Bibliography');
                 data-citation="<?= h($citation) ?>"
                 data-collection-ids="<?= h($projectIds) ?>"
             >
-                <h2><?php if ($safeUrl !== ''): ?><a href="<?= h($safeUrl) ?>" target="_blank" rel="noopener noreferrer"><?= h($source['title'] !== '' ? $source['title'] : 'Untitled source') ?></a><?php else: ?><?= h($source['title'] !== '' ? $source['title'] : 'Untitled source') ?><?php endif; ?></h2>
+                <h2 class="source-title">
+                    <?php if ($titleHref !== ''): ?>
+                        <a
+                            href="<?= h($titleHref) ?>"
+                            <?php if (!$hasExtractedText && $safeUrl !== ''): ?>target="_blank" rel="noopener noreferrer"<?php endif; ?>
+                        ><?= h($title) ?></a>
+                    <?php else: ?>
+                        <?= h($title) ?>
+                    <?php endif; ?>
+                    <?php if ($hasPdf): ?>
+                        <button
+                            type="button"
+                            class="source-icon-btn pdf-icon-btn"
+                            data-pdf-open-id="<?= (int) ($source['id'] ?? 0) ?>"
+                            title="Open PDF in Finder"
+                            aria-label="Open PDF in Finder"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M7 3h7l5 5v13H7V3zm7 1.5V9h4.5"></path>
+                                <path d="M9 13h6M9 16h6M9 19h4"></path>
+                            </svg>
+                        </button>
+                    <?php endif; ?>
+                    <?php if ($hasExtractedText): ?>
+                        <a
+                            class="source-icon-btn text-icon-link"
+                            href="/view.php?id=<?= (int) ($source['id'] ?? 0) ?>"
+                            title="Open extracted text"
+                            aria-label="Open extracted text"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M5 4h14v16H5z"></path>
+                                <path d="M8 8h8M8 12h8M8 16h5"></path>
+                            </svg>
+                        </a>
+                    <?php endif; ?>
+                    <?php if ($noteCount > 0): ?>
+                        <span class="source-note-count" title="<?= h($noteCount === 1 ? '1 note' : ($noteCount . ' notes')) ?>">
+                            <?= h('(' . $noteCount . ')') ?>
+                        </span>
+                    <?php endif; ?>
+                </h2>
                 <p class="citation"><?= h($citation) ?></p>
                 <div class="meta">
                     <span><?= h($source['type']) ?></span>

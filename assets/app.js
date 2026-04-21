@@ -1,4 +1,8 @@
 (function () {
+  const CURRENT_PROJECTS_STORAGE_KEY = "exlibris_current_project_ids";
+  const READER_FONT_FAMILY_STORAGE_KEY = "exlibris_reader_font_family";
+  const READER_FONT_SIZE_STORAGE_KEY = "exlibris_reader_font_size";
+
   function qs(selector) {
     return document.querySelector(selector);
   }
@@ -16,6 +20,16 @@
     return `${appBase()}${path}`;
   }
 
+  function readJsonScript(id, fallback) {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    try {
+      return JSON.parse(el.textContent || "");
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   function adminToken() {
     return localStorage.getItem("exlibris_admin_token") || "";
   }
@@ -28,19 +42,40 @@
   }
 
   async function postJson(url, payload) {
-    const response = await fetch(endpoint(url), {
-      method: "POST",
-      headers: headersWithAuth(),
-      body: JSON.stringify(payload),
-    });
-    let data = null;
-    try {
-      data = await response.json();
-    } catch (_) {}
-    if (!response.ok) {
-      throw new Error(data?.error || `Request failed (${response.status})`);
+    const transientCodes = new Set([502, 503, 504]);
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let response = null;
+      let data = null;
+      try {
+        response = await fetch(endpoint(url), {
+          method: "POST",
+          headers: headersWithAuth(),
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+          continue;
+        }
+        throw error;
+      }
+      try {
+        data = await response.json();
+      } catch (_) {}
+      if (response.ok) {
+        return data || {};
+      }
+      const error = new Error(data?.error || `Request failed (${response.status})`);
+      lastError = error;
+      if (transientCodes.has(response.status) && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+        continue;
+      }
+      throw error;
     }
-    return data || {};
+    throw lastError || new Error("Request failed");
   }
 
   function setText(selector, value) {
@@ -53,6 +88,74 @@
     if (!el) return;
     el.textContent = value || "";
     el.classList.toggle("error", Boolean(isError));
+  }
+
+  function getCurrentProjectIds() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CURRENT_PROJECTS_STORAGE_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed.map((id) => Number(id || 0)).filter((id) => id > 0) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function setCurrentProjectIds(ids) {
+    const safeIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map((id) => Number(id || 0)).filter((id) => id > 0)));
+    localStorage.setItem(CURRENT_PROJECTS_STORAGE_KEY, JSON.stringify(safeIds));
+  }
+
+  function readerFontFamilyToCss(value) {
+    switch (String(value || "").trim()) {
+      case "arial":
+        return "Arial, Helvetica, sans-serif";
+      case "georgia":
+        return "Georgia, serif";
+      case "times":
+        return "\"Times New Roman\", Times, serif";
+      case "ibm-mono":
+        return "IBM, monospace";
+      case "helvetica":
+      default:
+        return "\"Helvetica Neue\", Helvetica, Arial, sans-serif";
+    }
+  }
+
+  function getReaderFontFamily() {
+    return localStorage.getItem(READER_FONT_FAMILY_STORAGE_KEY) || "helvetica";
+  }
+
+  function setReaderFontFamily(value) {
+    localStorage.setItem(READER_FONT_FAMILY_STORAGE_KEY, String(value || "helvetica"));
+  }
+
+  function getReaderFontSize() {
+    const raw = Number(localStorage.getItem(READER_FONT_SIZE_STORAGE_KEY) || 12);
+    return Number.isFinite(raw) && raw >= 8 && raw <= 48 ? raw : 12;
+  }
+
+  function setReaderFontSize(value) {
+    const size = Number(value || 12);
+    localStorage.setItem(READER_FONT_SIZE_STORAGE_KEY, String(Number.isFinite(size) ? size : 12));
+  }
+
+  function currentProjectOptions() {
+    const projects = readJsonScript("current-projects-data", []);
+    return Array.isArray(projects)
+      ? projects
+          .map((project) => ({
+            id: Number(project?.id || 0),
+            name: String(project?.name || "").trim(),
+          }))
+          .filter((project) => project.id > 0 && project.name)
+      : [];
+  }
+
+  function projectLookupFromHeader() {
+    const lookup = new Map();
+    currentProjectOptions().forEach((project) => {
+      lookup.set(project.id, project.name);
+    });
+    return lookup;
   }
 
   function formatTraceLines(trace) {
@@ -422,6 +525,484 @@
     if (format) format.addEventListener("change", () => postJson("/api/settings.php", { citation_format: format.value }).then(() => location.reload()));
     const includePages = qs("#include-pages");
     if (includePages) includePages.addEventListener("change", () => postJson("/api/settings.php", { include_pages_in_citations: includePages.value }).then(() => location.reload()));
+  }
+
+  function wireCurrentProjects() {
+    const chips = qs("#current-project-chips");
+    const input = qs("#current-project-input");
+    const dataScript = qs("#current-projects-data");
+    const datalist = qs("#current-project-options");
+    if (!chips || !input || !dataScript || !datalist) return;
+
+    let options = currentProjectOptions();
+
+    const syncDataScript = () => {
+      dataScript.textContent = JSON.stringify(options);
+    };
+
+    const renderDatalist = () => {
+      datalist.innerHTML = "";
+      options
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+        .forEach((project) => {
+          const option = document.createElement("option");
+          option.value = project.name;
+          datalist.appendChild(option);
+        });
+    };
+
+    const renderChips = () => {
+      chips.innerHTML = "";
+      const lookup = new Map(options.map((project) => [project.id, project.name]));
+      const selectedIds = getCurrentProjectIds();
+      if (!selectedIds.length) {
+        const empty = document.createElement("span");
+        empty.className = "muted";
+        empty.textContent = "none";
+        chips.appendChild(empty);
+        return;
+      }
+      selectedIds.forEach((id) => {
+        const name = lookup.get(id) || `Project ${id}`;
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "header-project-chip";
+        chip.setAttribute("data-project-id", String(id));
+        chip.innerHTML = `<span>${name}</span><span class="header-project-chip-remove" aria-hidden="true">x</span>`;
+        chip.title = `Remove ${name}`;
+        chip.addEventListener("click", () => {
+          setCurrentProjectIds(getCurrentProjectIds().filter((value) => value !== id));
+          renderChips();
+        });
+        chips.appendChild(chip);
+      });
+    };
+
+    const addProjectByName = async (rawName) => {
+      const name = String(rawName || "").trim();
+      if (!name) return;
+
+      const existing = options.find((project) => project.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        setCurrentProjectIds(getCurrentProjectIds().concat(existing.id));
+        renderChips();
+        input.value = "";
+        return;
+      }
+
+      try {
+        const data = await postJson("/api/projects.php", { name });
+        const project = data?.project || {};
+        const projectId = Number(project.id || 0);
+        const projectName = String(project.name || "").trim();
+        if (!projectId || !projectName) {
+          throw new Error("Project creation returned invalid data.");
+        }
+        options.push({ id: projectId, name: projectName });
+        options = Array.from(new Map(options.map((projectItem) => [projectItem.id, projectItem])).values());
+        syncDataScript();
+        renderDatalist();
+        setCurrentProjectIds(getCurrentProjectIds().concat(projectId));
+        renderChips();
+        input.value = "";
+        setStatus(`Current project added: ${projectName}.`);
+      } catch (error) {
+        setStatus(error.message || "Could not create project.", true);
+      }
+    };
+
+    const commitInput = async () => {
+      const value = String(input.value || "").trim().replace(/,$/, "").trim();
+      if (!value) return;
+      await addProjectByName(value);
+    };
+
+    renderDatalist();
+    renderChips();
+
+    input.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" && event.key !== "Tab" && event.key !== ",") return;
+      event.preventDefault();
+      await commitInput();
+    });
+
+    input.addEventListener("blur", async () => {
+      await commitInput();
+    });
+  }
+
+  function wirePdfActions() {
+    qsa("[data-pdf-open-id]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const sourceId = Number(button.getAttribute("data-pdf-open-id") || 0);
+        if (!sourceId) return;
+        await withBusyButton(button, "Opening...", async () => {
+          try {
+            await postJson("/api/pdf.php", { action: "open", id: sourceId });
+            setStatus("Opened PDF in Finder.");
+          } catch (error) {
+            setStatus(error.message || "Could not open PDF.", true);
+          }
+        });
+      });
+    });
+
+    qsa("[data-pdf-extract-id]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const sourceId = Number(button.getAttribute("data-pdf-extract-id") || 0);
+        if (!sourceId) return;
+        await withBusyButton(button, "Extracting...", async () => {
+          try {
+            const data = await postJson("/api/pdf.php", { action: "extract", id: sourceId });
+            const chars = Number(data?.chars || 0);
+            setStatus(`Extracted ${chars.toLocaleString()} characters from PDF.`);
+            window.setTimeout(() => location.reload(), 500);
+          } catch (error) {
+            setStatus(error.message || "PDF extraction failed.", true);
+          }
+        });
+      });
+    });
+
+    qsa("[data-body-reformat-id]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const sourceId = Number(button.getAttribute("data-body-reformat-id") || 0);
+        if (!sourceId) return;
+        await withBusyButton(button, "Cleaning...", async () => {
+          try {
+            const data = await postJson("/api/assistant.php", { action: "reformat_body_text", source_id: sourceId });
+            const chars = Number(data?.body_chars || 0);
+            const summary = String(data?.reformatted?.change_summary || "").trim();
+            setStatus(summary ? `Saved AI-cleaned text (${chars.toLocaleString()} chars). ${summary}` : `Saved AI-cleaned text (${chars.toLocaleString()} chars).`);
+            window.setTimeout(() => location.reload(), 500);
+          } catch (error) {
+            setStatus(error.message || "AI text cleanup failed.", true);
+          }
+        });
+      });
+    });
+  }
+
+  function wireAnnotationViewer() {
+    const panel = qs("#viewer-text-panel");
+    const stage = qs("#viewer-reading-stage");
+    const rail = qs("#viewer-annotations-rail");
+    const notesLayer = qs("#viewer-notes-layer");
+    const selectionCard = qs("#viewer-selection-card");
+    if (!panel || !stage || !rail || !notesLayer || !selectionCard) return;
+
+    const source = readJsonScript("viewer-source-data", {});
+    const initialNotes = readJsonScript("viewer-notes-data", []);
+    const text = String(source?.body_text || "");
+    const selectedQuote = qs("#viewer-selected-quote");
+    const noteInput = qs("#viewer-note-text");
+    const tagsInput = qs("#viewer-note-tags");
+    const saveBtn = qs("#viewer-note-save");
+    const clearBtn = qs("#viewer-note-clear");
+    const noteCount = qs("#viewer-note-count");
+    const fontFamilySelect = qs("#viewer-font-family");
+    const fontSizeSelect = qs("#viewer-font-size");
+    let notes = Array.isArray(initialNotes) ? initialNotes.slice() : [];
+    let selectionState = null;
+    let activeNoteId = 0;
+    let renderQueued = false;
+
+    const applyReaderTypography = () => {
+      const familyValue = getReaderFontFamily();
+      const sizeValue = getReaderFontSize();
+      if (fontFamilySelect) {
+        fontFamilySelect.value = familyValue;
+      }
+      if (fontSizeSelect) {
+        fontSizeSelect.value = String(sizeValue);
+      }
+      panel.style.fontFamily = readerFontFamilyToCss(familyValue);
+      panel.style.fontSize = `${sizeValue}px`;
+      queueAnnotationLayout();
+    };
+
+    const clearBrowserSelection = () => {
+      const selection = window.getSelection();
+      if (selection) selection.removeAllRanges();
+    };
+
+    const clearDraft = () => {
+      selectionState = null;
+      activeNoteId = 0;
+      clearBrowserSelection();
+      if (selectedQuote) selectedQuote.value = "";
+      if (noteInput) noteInput.value = "";
+      if (tagsInput) tagsInput.value = "";
+      selectionCard.classList.add("hidden");
+      renderViewer();
+    };
+
+    const textLength = (value) => Array.from(String(value || "")).length;
+    const textSlice = (value, start, end) => Array.from(String(value || "")).slice(start, end).join("");
+
+    const getRangeOffset = (container, offset) => {
+      const range = document.createRange();
+      range.selectNodeContents(panel);
+      range.setEnd(container, offset);
+      return textLength(range.toString());
+    };
+
+    const updateSelectionState = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+      const range = selection.getRangeAt(0);
+      if (!panel.contains(range.commonAncestorContainer)) return;
+      const startOffset = getRangeOffset(range.startContainer, range.startOffset);
+      const endOffset = getRangeOffset(range.endContainer, range.endOffset);
+      if (endOffset <= startOffset) return;
+      const quote = textSlice(text, startOffset, endOffset).trim();
+      if (!quote) return;
+      const rangeRect = range.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      selectionState = {
+        start_offset: startOffset,
+        end_offset: endOffset,
+        quote_text: quote,
+        anchor_top: Math.max(0, rangeRect.top - stageRect.top),
+      };
+      if (selectedQuote) selectedQuote.value = quote;
+      selectionCard.classList.remove("hidden");
+      activeNoteId = 0;
+      renderViewer();
+    };
+
+    const renderViewerText = () => {
+      panel.innerHTML = "";
+      const sortedNotes = notes
+        .slice()
+        .sort((a, b) => Number(a.start_offset || 0) - Number(b.start_offset || 0));
+      let cursor = 0;
+
+      const appendPlain = (chunk) => {
+        if (!chunk) return;
+        panel.appendChild(document.createTextNode(chunk));
+      };
+
+      sortedNotes.forEach((note) => {
+        const start = Number(note.start_offset || 0);
+        const end = Number(note.end_offset || 0);
+        appendPlain(textSlice(text, cursor, start));
+        const mark = document.createElement("mark");
+        mark.className = "viewer-highlight";
+        if (Number(note.id || 0) === activeNoteId) {
+          mark.classList.add("is-active");
+        }
+        mark.setAttribute("data-note-id", String(note.id || 0));
+        mark.textContent = textSlice(text, start, end);
+        mark.addEventListener("click", () => {
+          activeNoteId = Number(note.id || 0);
+          renderViewer();
+        });
+        panel.appendChild(mark);
+        cursor = end;
+      });
+
+      appendPlain(textSlice(text, cursor, textLength(text)));
+    };
+
+    const renderNotes = () => {
+      notesLayer.innerHTML = "";
+      if (noteCount) noteCount.textContent = String(notes.length);
+
+      notes.forEach((note) => {
+        const card = document.createElement("article");
+        card.className = "viewer-note-card";
+        card.setAttribute("data-note-id", String(note.id || 0));
+        if (Number(note.id || 0) === activeNoteId) {
+          card.classList.add("is-active");
+        }
+
+        const quote = document.createElement("blockquote");
+        quote.className = "viewer-note-quote";
+        quote.textContent = String(note.quote_text || "");
+        card.appendChild(quote);
+
+        const body = document.createElement("p");
+        body.textContent = String(note.note_text || "");
+        card.appendChild(body);
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const projectLookup = projectLookupFromHeader();
+        const tags = Array.isArray(note.tag_labels) ? note.tag_labels : [];
+        tags.forEach((tag) => {
+          const chip = document.createElement("span");
+          chip.className = "badge-note-tag";
+          chip.textContent = `#${tag}`;
+          meta.appendChild(chip);
+        });
+        const projects = Array.isArray(note.project_ids) ? note.project_ids : [];
+        projects.forEach((projectId) => {
+          const chip = document.createElement("span");
+          chip.className = "badge-collection";
+          chip.textContent = projectLookup.get(Number(projectId || 0)) || `Project ${projectId}`;
+          meta.appendChild(chip);
+        });
+        if (meta.childNodes.length) {
+          card.appendChild(meta);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const focusBtn = document.createElement("button");
+        focusBtn.type = "button";
+        focusBtn.className = "btn btn-secondary";
+        focusBtn.textContent = "Focus";
+        focusBtn.addEventListener("click", () => {
+          activeNoteId = Number(note.id || 0);
+          renderViewer();
+          const mark = panel.querySelector(`[data-note-id="${note.id}"]`);
+          if (mark) mark.scrollIntoView({ block: "center", behavior: "smooth" });
+        });
+        actions.appendChild(focusBtn);
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "btn btn-danger";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", async () => {
+          if (!confirm("Delete this note?")) return;
+          try {
+            await postJson("/api/notes.php", { action: "delete", note_id: Number(note.id || 0) });
+            notes = notes.filter((item) => Number(item.id || 0) !== Number(note.id || 0));
+            if (activeNoteId === Number(note.id || 0)) activeNoteId = 0;
+            renderViewer();
+            setStatus("Note deleted.");
+          } catch (error) {
+            setStatus(error.message || "Could not delete note.", true);
+          }
+        });
+        actions.appendChild(deleteBtn);
+
+        card.appendChild(actions);
+        notesLayer.appendChild(card);
+      });
+    };
+
+    const positionCards = () => {
+      const cards = [];
+      notes.forEach((note) => {
+        const noteId = Number(note.id || 0);
+        const mark = panel.querySelector(`[data-note-id="${noteId}"]`);
+        const card = notesLayer.querySelector(`[data-note-id="${noteId}"]`);
+        if (!mark || !card) return;
+        cards.push({
+          el: card,
+          targetTop: Math.max(0, mark.offsetTop - 8),
+        });
+      });
+
+      if (!selectionCard.classList.contains("hidden") && selectionState) {
+        cards.push({
+          el: selectionCard,
+          targetTop: Math.max(0, Number(selectionState.anchor_top || 0)),
+        });
+      }
+
+      cards.sort((a, b) => a.targetTop - b.targetTop);
+      let nextTop = 0;
+      let maxBottom = 0;
+      cards.forEach((item) => {
+        const top = Math.max(item.targetTop, nextTop);
+        item.el.style.top = `${top}px`;
+        const height = item.el.offsetHeight;
+        nextTop = top + height + 12;
+        maxBottom = Math.max(maxBottom, top + height);
+      });
+
+      rail.style.minHeight = `${Math.max(panel.offsetHeight, maxBottom)}px`;
+    };
+
+    const queueAnnotationLayout = () => {
+      if (renderQueued) return;
+      renderQueued = true;
+      window.requestAnimationFrame(() => {
+        renderQueued = false;
+        positionCards();
+      });
+    };
+
+    function renderViewer() {
+      renderViewerText();
+      renderNotes();
+      queueAnnotationLayout();
+    }
+
+    panel.addEventListener("mouseup", updateSelectionState);
+    panel.addEventListener("keyup", updateSelectionState);
+
+    if (fontFamilySelect) {
+      fontFamilySelect.addEventListener("change", () => {
+        setReaderFontFamily(fontFamilySelect.value || "helvetica");
+        applyReaderTypography();
+      });
+    }
+
+    if (fontSizeSelect) {
+      fontSizeSelect.addEventListener("change", () => {
+        setReaderFontSize(fontSizeSelect.value || "12");
+        applyReaderTypography();
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener("click", clearDraft);
+    }
+
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async () => {
+        if (!selectionState) {
+          setStatus("Select a passage before saving a note.", true);
+          return;
+        }
+        const noteText = String(noteInput?.value || "").trim();
+        if (!noteText) {
+          setStatus("Write a note before saving.", true);
+          return;
+        }
+        const tagLabels = String(tagsInput?.value || "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+
+        try {
+          const data = await postJson("/api/notes.php", {
+            action: "create",
+            note: {
+              source_id: Number(source?.id || 0),
+              start_offset: selectionState.start_offset,
+              end_offset: selectionState.end_offset,
+              quote_text: selectionState.quote_text,
+              note_text: noteText,
+              tag_labels: tagLabels,
+              project_ids: getCurrentProjectIds(),
+            },
+          });
+          if (data?.note) {
+            notes.push(data.note);
+            activeNoteId = Number(data.note.id || 0);
+            notes.sort((a, b) => Number(a.start_offset || 0) - Number(b.start_offset || 0));
+          }
+          clearDraft();
+          activeNoteId = Number(data?.note?.id || 0);
+          renderViewer();
+          setStatus("Note saved.");
+        } catch (error) {
+          setStatus(error.message || "Could not save note.", true);
+        }
+      });
+    }
+
+    window.addEventListener("resize", queueAnnotationLayout);
+    applyReaderTypography();
+    renderViewer();
   }
 
   function wireSettingsPanels() {
@@ -1284,6 +1865,9 @@
     wireCollectionTagAutocomplete();
     wireDedupeCleanup();
     wireThemeAndFormat();
+    wireCurrentProjects();
+    wirePdfActions();
+    wireAnnotationViewer();
     wireSettingsPanels();
     wireAssistantPanels();
     wireReaderPanel();

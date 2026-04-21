@@ -159,6 +159,58 @@ function openai_json_response(string $systemPrompt, string $userPrompt): ?array
     return is_array($decoded) ? $decoded : null;
 }
 
+function openai_reformat_extracted_text(array $source): ?array
+{
+    $rawText = str_replace(["\r\n", "\r"], "\n", (string) ($source['body_text'] ?? ''));
+    $rawText = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $rawText) ?? $rawText;
+    $rawText = preg_replace("/[ \t]+\n/u", "\n", $rawText) ?? $rawText;
+    $rawText = trim($rawText);
+    if ($rawText === '') {
+        return null;
+    }
+
+    $maxChars = 120000;
+    $truncated = false;
+    if (mb_strlen($rawText) > $maxChars) {
+        $rawText = mb_substr($rawText, 0, $maxChars);
+        $truncated = true;
+    }
+
+    $context = [
+        'title' => (string) ($source['title'] ?? ''),
+        'authors' => array_values(array_filter(array_map('strval', $source['authors'] ?? []))),
+        'year' => (string) ($source['year'] ?? ''),
+        'url' => (string) ($source['url'] ?? ''),
+        'body_source' => (string) ($source['body_source'] ?? ''),
+    ];
+
+    $response = openai_json_response(
+        'You clean extracted research text for a human reading interface. Return JSON with keys body_text (string) and change_summary (string). ' .
+        'Preserve the underlying substance of the document. Remove navigation chrome, cookie banners, repeated headers/footers, orphaned link lists, duplicate boilerplate, and obvious OCR noise when confident. ' .
+        'Reformat the remaining content into readable paragraphs, headings, and lists only when the structure is strongly implied by the source. ' .
+        'Do not summarize away substantive passages. Do not invent citations, wording, or section structure not supported by the input. ' .
+        'When uncertain, keep more text rather than less.',
+        "Document context:\n" . json_encode($context, JSON_UNESCAPED_UNICODE) . "\n\nExtracted text to clean:\n" . $rawText
+    );
+    if (!is_array($response)) {
+        return null;
+    }
+
+    $cleanedText = str_replace(["\r\n", "\r"], "\n", trim((string) ($response['body_text'] ?? '')));
+    $cleanedText = preg_replace('/\n{4,}/u', "\n\n\n", $cleanedText) ?? $cleanedText;
+    if ($cleanedText === '') {
+        return null;
+    }
+
+    return [
+        'body_text' => $cleanedText,
+        'change_summary' => trim((string) ($response['change_summary'] ?? '')),
+        'input_truncated' => $truncated,
+        'original_chars' => mb_strlen($rawText),
+        'cleaned_chars' => mb_strlen($cleanedText),
+    ];
+}
+
 function openai_reader_model(): string
 {
     $env = trim((string) getenv('EXLIBRIS_OPENAI_READER_MODEL'));

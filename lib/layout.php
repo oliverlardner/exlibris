@@ -8,6 +8,7 @@ function render_header(string $title): void
     ensure_defaults();
     $theme = current_theme_mode();
     $format = current_citation_format();
+    $projects = list_projects();
     $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
     $appBase = $scriptDir === '/' || $scriptDir === '.' ? '' : rtrim($scriptDir, '/');
     ?>
@@ -32,12 +33,28 @@ function render_header(string $title): void
                 <a href="/digest.php">Digest</a>
                 <a href="/settings.php">Settings</a>
             </nav>
+            <div class="header-projects-control">
+                <span>Current Projects</span>
+                <div class="header-projects-editor">
+                    <div id="current-project-chips" class="header-project-chips" aria-label="Current projects"></div>
+                    <input id="current-project-input" list="current-project-options" placeholder="Add or create project">
+                </div>
+                <datalist id="current-project-options">
+                    <?php foreach ($projects as $project): ?>
+                        <option value="<?= h((string) ($project['name'] ?? '')) ?>"></option>
+                    <?php endforeach; ?>
+                </datalist>
+            </div>
             <button id="theme-toggle" class="btn btn-secondary" type="button" title="Toggle theme mode">
                 Theme: <?= h(strtoupper($theme)) ?>
             </button>
         </div>
     </header>
     <main class="container page">
+    <script id="current-projects-data" type="application/json"><?= json_encode(array_values(array_map(static fn (array $project): array => [
+        'id' => (int) ($project['id'] ?? 0),
+        'name' => (string) ($project['name'] ?? ''),
+    ], $projects)), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?></script>
     <?php
 }
 

@@ -103,6 +103,58 @@ a:hover {
   min-height: 42px;
 }
 
+.header-projects-control {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.header-projects-editor {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.header-project-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.header-project-chip {
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 45%);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  padding: 0.15rem 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.header-project-chip:hover {
+  color: var(--accent);
+}
+
+.header-project-chip-remove {
+  color: var(--muted);
+}
+
+#current-project-input {
+  min-width: 12rem;
+  flex: 1 1 12rem;
+  max-width: 20rem;
+}
+
 .brand {
   font-weight: 400;
   font-size: 1rem;
@@ -284,6 +336,48 @@ textarea.drop-active {
   color: inherit;
 }
 
+.source-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.source-note-count {
+  color: var(--success);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.source-icon-btn,
+.pdf-icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.source-icon-btn:hover,
+.pdf-icon-btn:hover {
+  color: var(--accent);
+}
+
+.source-icon-btn svg,
+.pdf-icon-btn svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
+}
+
 .meta {
   display: flex;
   gap: 0.65rem;
@@ -298,6 +392,102 @@ textarea.drop-active {
 
 .badge-collection {
   color: #8ca1bf;
+}
+
+.badge-note-tag {
+  color: var(--copy);
+}
+
+.viewer-layout {
+  display: block;
+}
+
+.viewer-toolbar {
+  align-items: flex-end;
+}
+
+.viewer-controls {
+  gap: 0.75rem;
+}
+
+.viewer-controls label {
+  color: var(--muted);
+}
+
+.viewer-controls select {
+  min-width: 8rem;
+}
+
+.viewer-main {
+  min-width: 0;
+}
+
+.viewer-reading-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+  gap: 1rem;
+  align-items: start;
+}
+
+.viewer-text-panel {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  padding: 0.25rem;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.viewer-highlight {
+  background: color-mix(in srgb, var(--copy), transparent 55%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.viewer-highlight.is-active {
+  background: color-mix(in srgb, var(--accent), transparent 45%);
+}
+
+.viewer-annotations-rail {
+  position: relative;
+  min-width: 18rem;
+  min-height: 100%;
+}
+
+.viewer-notes-layer {
+  position: relative;
+  min-height: 100%;
+}
+
+.viewer-note-card,
+.viewer-selection-card {
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 65%);
+  padding: 0.65rem;
+  background: color-mix(in srgb, var(--surface), transparent 8%);
+  width: 100%;
+}
+
+.viewer-note-card {
+  position: absolute;
+  left: 0;
+}
+
+.viewer-note-card.is-active {
+  border-color: color-mix(in srgb, var(--accent), transparent 25%);
+}
+
+.viewer-selection-card {
+  position: absolute;
+  left: 0;
+  border-color: color-mix(in srgb, var(--copy), transparent 35%);
+}
+
+.viewer-note-quote {
+  margin: 0 0 0.5rem;
+  color: #d0d7e2;
+  border-left: 2px solid color-mix(in srgb, var(--accent), transparent 35%);
+  padding-left: 0.55rem;
 }
 
 .reader-source-tag {
@@ -388,8 +578,36 @@ label, summary,
     padding: 0.45rem 0;
   }
 
+  .header-projects-control {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .header-projects-editor,
+  .header-project-chips,
+  #current-project-input {
+    width: 100%;
+    max-width: none;
+  }
+
   .row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .viewer-reading-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-controls {
+    width: 100%;
+  }
+
+  .viewer-note-card,
+  .viewer-selection-card {
+    position: static;
+    width: 100%;
+    margin-top: 0.8rem;
   }
 }

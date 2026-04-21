@@ -22,6 +22,11 @@ if (!is_array($row)) {
 $source = source_to_array($row);
 $projects = projects_for_source_ids([(int) ($source['id'] ?? 0)])[(int) ($source['id'] ?? 0)] ?? [];
 $projectNames = array_values(array_filter(array_map(static fn (array $project): string => trim((string) ($project['name'] ?? '')), $projects)));
+$pdfPath = trim((string) ($source['pdf_path'] ?? ''));
+$pdfName = $pdfPath !== '' ? basename($pdfPath) : '';
+$bodyText = trim((string) ($source['body_text'] ?? ''));
+$bodyChars = strlen($bodyText);
+$bodyPreview = $bodyText !== '' ? mb_substr($bodyText, 0, 1200) : '';
 $format = current_citation_format();
 $cache = $row['citation_cache'] ?? [];
 if (is_string($cache)) {
@@ -54,9 +59,57 @@ render_header('Source');
             <?php if ($safeUrl !== ''): ?>
                 <a class="btn" href="<?= h($safeUrl) ?>" target="_blank" rel="noopener noreferrer">Visit</a>
             <?php endif; ?>
+            <?php if ($bodyText !== ''): ?>
+                <a class="btn btn-secondary" href="/view.php?id=<?= (int) $source['id'] ?>">View Text</a>
+                <button type="button" class="btn btn-copy" data-body-reformat-id="<?= (int) $source['id'] ?>">AI Clean Text</button>
+            <?php endif; ?>
             <button type="button" class="btn btn-load" id="zotero-push-source-btn" data-source-id="<?= (int) $source['id'] ?>">Push Zotero</button>
         </div>
     </article>
+    <?php if ($pdfPath !== ''): ?>
+        <article class="card stack">
+            <h2>PDF</h2>
+            <p class="muted"><?= h($pdfName) ?></p>
+            <?php if ($bodyText !== ''): ?>
+                <div class="meta">
+                    <span>Extracted</span>
+                    <span><?= h(strtoupper((string) ($source['body_source'] !== '' ? $source['body_source'] : 'text'))) ?></span>
+                    <span><?= h(number_format($bodyChars)) ?> chars</span>
+                    <?php if ((string) ($source['body_fetched_at'] ?? '') !== ''): ?>
+                        <span><?= h((string) $source['body_fetched_at']) ?></span>
+                    <?php endif; ?>
+                </div>
+                <pre><?= h($bodyPreview . ($bodyChars > mb_strlen($bodyPreview) ? "\n\n[truncated]" : '')) ?></pre>
+            <?php else: ?>
+                <p class="muted">No extracted PDF text yet.</p>
+            <?php endif; ?>
+            <div class="actions">
+                <button type="button" class="btn btn-load" id="pdf-open-btn" data-pdf-open-id="<?= (int) $source['id'] ?>">Open in Finder</button>
+                <button type="button" class="btn btn-copy" id="pdf-extract-btn" data-pdf-extract-id="<?= (int) $source['id'] ?>">Extract Text</button>
+                <?php if ($bodyText !== ''): ?>
+                    <a class="btn btn-secondary" href="/view.php?id=<?= (int) $source['id'] ?>">View Text</a>
+                <?php endif; ?>
+            </div>
+        </article>
+    <?php endif; ?>
+
+    <?php if ($bodyText !== '' && $pdfPath === ''): ?>
+        <article class="card stack">
+            <h2>Extracted Text</h2>
+            <div class="meta">
+                <span><?= h(strtoupper((string) ($source['body_source'] !== '' ? $source['body_source'] : 'text'))) ?></span>
+                <span><?= h(number_format($bodyChars)) ?> chars</span>
+                <?php if ((string) ($source['body_fetched_at'] ?? '') !== ''): ?>
+                    <span><?= h((string) $source['body_fetched_at']) ?></span>
+                <?php endif; ?>
+            </div>
+            <pre><?= h($bodyPreview . ($bodyChars > mb_strlen($bodyPreview) ? "\n\n[truncated]" : '')) ?></pre>
+            <div class="actions">
+                <a class="btn btn-secondary" href="/view.php?id=<?= (int) $source['id'] ?>">View Text</a>
+                <button type="button" class="btn btn-copy" data-body-reformat-id="<?= (int) $source['id'] ?>">AI Clean Text</button>
+            </div>
+        </article>
+    <?php endif; ?>
 
     <form id="source-form" class="card">
         <h2>Edit Source</h2>

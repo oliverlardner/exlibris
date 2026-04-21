@@ -109,9 +109,17 @@ if ($mode === 'push_one' || $mode === 'push_unsynced') {
 
 try {
     $items = zotero_fetch_items($limit, $start);
-    $collections = zotero_fetch_collections();
 } catch (Throwable $e) {
     json_response(['ok' => false, 'error' => $e->getMessage()], 422);
+}
+$collections = [];
+$collectionFetchError = '';
+try {
+    $collections = zotero_fetch_collections();
+} catch (Throwable $e) {
+    // Do not fail item import if collection sync is temporarily unavailable.
+    // We still import items and surface this warning in the response payload.
+    $collectionFetchError = $e->getMessage();
 }
 $collectionProjectMap = [];
 foreach ($collections as $collection) {
@@ -206,6 +214,9 @@ foreach ($items as $item) {
             $existingSource['origin_provider'] = 'zotero';
             $existingSource['origin_external_id'] = $zoteroKey !== '' ? $zoteroKey : (string) ($existingSource['origin_external_id'] ?? '');
             $existingSource['zotero_synced_at'] = gmdate('c');
+            if (trim((string) ($source['pdf_path'] ?? '')) !== '') {
+                $existingSource['pdf_path'] = (string) $source['pdf_path'];
+            }
             save_source($existingSource);
         }
     }
@@ -218,5 +229,6 @@ json_response([
     'imported_count' => count($importedIds),
     'imported_ids' => $importedIds,
     'linked_project_count' => $linkedProjects,
+    'collection_error' => $collectionFetchError,
     'items' => $preview,
 ]);

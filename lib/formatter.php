@@ -271,6 +271,7 @@ function source_to_array(array $row): array
         'zotero_item_key' => (string) ($row['zotero_item_key'] ?? ''),
         'zotero_version' => isset($row['zotero_version']) ? (int) $row['zotero_version'] : null,
         'zotero_synced_at' => (string) ($row['zotero_synced_at'] ?? ''),
+        'pdf_path' => (string) ($row['pdf_path'] ?? ''),
         'project_ids' => project_ids_for_source((int) $row['id']),
     ];
 }
