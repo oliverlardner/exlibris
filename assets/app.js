@@ -1326,6 +1326,7 @@
             status.classList.remove("error");
             status.textContent = data.message || "Saved.";
           }
+          window.setTimeout(() => location.reload(), 300);
         } catch (error) {
           if (status) {
             status.classList.add("error");

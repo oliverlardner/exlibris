@@ -40,14 +40,48 @@ function h(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
-function current_citation_format(): string
+function supported_citation_formats(): array
 {
-    $value = strtolower((string) setting('citation_format', 'apa'));
-    if (!in_array($value, ['apa', 'mla', 'chicago'], true)) {
-        return 'apa';
+    return [
+        'apa' => 'APA',
+        'mla' => 'MLA',
+        'chicago18' => 'Chicago 18',
+    ];
+}
+
+function normalize_citation_format(string $value, string $default = 'apa'): string
+{
+    $value = strtolower(trim($value));
+    $aliases = [
+        'chicago' => 'chicago18',
+    ];
+    if (isset($aliases[$value])) {
+        $value = $aliases[$value];
+    }
+
+    $formats = supported_citation_formats();
+    if (!array_key_exists($value, $formats)) {
+        if ($default === '') {
+            return '';
+        }
+
+        return array_key_exists($default, $formats) ? $default : 'apa';
     }
 
     return $value;
+}
+
+function citation_format_label(string $format): string
+{
+    $formats = supported_citation_formats();
+    $normalized = normalize_citation_format($format);
+
+    return $formats[$normalized] ?? $formats['apa'];
+}
+
+function current_citation_format(): string
+{
+    return normalize_citation_format((string) setting('citation_format', 'apa'));
 }
 
 function current_theme_mode(): string

@@ -36,9 +36,9 @@ function render_header(string $title): void
             <label class="header-citation-control" for="citation-format">
                 <span>Style</span>
                 <select id="citation-format" aria-label="Citation style">
-                    <option value="apa" <?= $format === 'apa' ? 'selected' : '' ?>>APA</option>
-                    <option value="mla" <?= $format === 'mla' ? 'selected' : '' ?>>MLA</option>
-                    <option value="chicago" <?= $format === 'chicago' ? 'selected' : '' ?>>Chicago</option>
+                    <?php foreach (supported_citation_formats() as $key => $label): ?>
+                        <option value="<?= h($key) ?>" <?= $format === $key ? 'selected' : '' ?>><?= h($label) ?></option>
+                    <?php endforeach; ?>
                 </select>
             </label>
             <div class="header-projects-control">

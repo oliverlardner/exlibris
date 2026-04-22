@@ -49,6 +49,147 @@ function validate_openai_api_key(string $apiKey): array
     }
 }
 
+function openai_available_chat_models(): array
+{
+    $apiKey = effective_openai_api_key();
+    if ($apiKey === '') {
+        return [];
+    }
+
+    try {
+        $response = http_get_json(
+            'https://api.openai.com/v1/models',
+            ['Authorization: Bearer ' . $apiKey]
+        );
+    } catch (Throwable) {
+        return [];
+    }
+
+    $items = is_array($response['data'] ?? null) ? $response['data'] : [];
+    $models = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $id = trim((string) ($item['id'] ?? ''));
+        if ($id === '' || !openai_is_chat_model_id($id)) {
+            continue;
+        }
+        $models[$id] = $id;
+    }
+
+    natcasesort($models);
+
+    return array_values($models);
+}
+
+function openai_is_chat_model_id(string $id): bool
+{
+    $id = strtolower(trim($id));
+    if ($id === '') {
+        return false;
+    }
+
+    $includePrefixes = ['gpt-', 'o1', 'o3', 'o4'];
+    $hasKnownPrefix = false;
+    foreach ($includePrefixes as $prefix) {
+        if (str_starts_with($id, $prefix)) {
+            $hasKnownPrefix = true;
+            break;
+        }
+    }
+    if (!$hasKnownPrefix) {
+        return false;
+    }
+
+    $excludeFragments = [
+        'audio',
+        'transcribe',
+        'tts',
+        'whisper',
+        'embedding',
+        'moderation',
+        'image',
+        'vision',
+        'realtime',
+        'search',
+        'omni-moderation',
+    ];
+    foreach ($excludeFragments as $fragment) {
+        if (str_contains($id, $fragment)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function openai_recommended_assistant_model(array $models): string
+{
+    $candidates = array_values(array_filter(array_map(static fn (mixed $model): string => trim((string) $model), $models)));
+    if ($candidates === []) {
+        return '';
+    }
+
+    $preferredExact = [
+        'gpt-5',
+        'gpt-5-latest',
+        'gpt-4.1',
+        'gpt-4.1-latest',
+        'o3',
+        'gpt-4o',
+        'o4-mini',
+        'gpt-4o-mini',
+    ];
+    foreach ($preferredExact as $preferred) {
+        foreach ($candidates as $candidate) {
+            if (strcasecmp($candidate, $preferred) === 0) {
+                return $candidate;
+            }
+        }
+    }
+
+    $scored = [];
+    foreach ($candidates as $candidate) {
+        $id = strtolower($candidate);
+        $score = 0;
+
+        if (str_starts_with($id, 'gpt-5')) {
+            $score += 1000;
+        } elseif (str_starts_with($id, 'gpt-4.1')) {
+            $score += 900;
+        } elseif (str_starts_with($id, 'o3')) {
+            $score += 850;
+        } elseif (str_starts_with($id, 'gpt-4o')) {
+            $score += 800;
+        } elseif (str_starts_with($id, 'o4')) {
+            $score += 760;
+        } elseif (str_starts_with($id, 'o1')) {
+            $score += 700;
+        } elseif (str_starts_with($id, 'gpt-4')) {
+            $score += 650;
+        } else {
+            $score += 500;
+        }
+
+        if (str_contains($id, 'mini')) {
+            $score -= 120;
+        }
+        if (str_contains($id, 'nano')) {
+            $score -= 220;
+        }
+        if (str_contains($id, 'preview')) {
+            $score -= 20;
+        }
+
+        $scored[$candidate] = $score;
+    }
+
+    arsort($scored, SORT_NUMERIC);
+
+    return (string) array_key_first($scored);
+}
+
 function effective_openai_api_key(): string
 {
     $env = trim((string) getenv('EXLIBRIS_OPENAI_API_KEY'));

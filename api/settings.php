@@ -32,8 +32,8 @@ $payload = json_input();
 
 $citationFormat = $payload['citation_format'] ?? null;
 if (is_string($citationFormat)) {
-    $citationFormat = strtolower(trim($citationFormat));
-    if (in_array($citationFormat, ['apa', 'mla', 'chicago'], true)) {
+    $citationFormat = normalize_citation_format($citationFormat, '');
+    if ($citationFormat !== '') {
         set_setting('citation_format', $citationFormat);
         regenerate_all_citation_cache();
     }

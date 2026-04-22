@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/lib/layout.php';
+require_once __DIR__ . '/lib/openai.php';
 
 ensure_defaults();
 $themeMode = current_theme_mode();
@@ -9,6 +10,13 @@ $includePages = include_pages_in_citations();
 $openAiManagedByEnv = trim((string) getenv('EXLIBRIS_OPENAI_API_KEY')) !== '';
 $assistantEnabled = setting('assistant_enabled', '1') !== '0';
 $assistantModel = (string) setting('assistant_model', 'gpt-4o-mini');
+$assistantModelOptions = openai_available_chat_models();
+$hasAssistantModelOptions = $assistantModelOptions !== [];
+if ($assistantModel !== '' && !in_array($assistantModel, $assistantModelOptions, true)) {
+    array_unshift($assistantModelOptions, $assistantModel);
+    $assistantModelOptions = array_values(array_unique($assistantModelOptions));
+}
+$recommendedAssistantModel = openai_recommended_assistant_model($assistantModelOptions);
 $zoteroUserId = (string) setting('zotero_user_id', '');
 $zoteroApiKeySet = trim((string) setting('zotero_api_key', '')) !== '';
 $zoteroLibraryType = (string) setting('zotero_library_type', 'users');
@@ -23,7 +31,7 @@ render_header('Settings');
 
     <article class="card stack">
         <h2>Citation Format</h2>
-        <p class="muted">Change citation style from the header on any page. Page-number formatting still lives here.</p>
+        <p class="muted">Change citation style from the header on any page, including the Chicago 18 bibliography formatter. Page-number formatting still lives here.</p>
         <label for="include-pages">Include page numbers in formatted citations</label>
         <select id="include-pages">
             <option value="1" <?= $includePages ? 'selected' : '' ?>>Yes</option>
@@ -68,7 +76,17 @@ render_header('Settings');
             <option value="0" <?= !$assistantEnabled ? 'selected' : '' ?>>No</option>
         </select>
         <label for="assistant-model">Assistant model</label>
-        <input id="assistant-model" value="<?= h($assistantModel) ?>" placeholder="gpt-4o-mini">
+        <?php if ($hasAssistantModelOptions): ?>
+            <select id="assistant-model">
+                <?php foreach ($assistantModelOptions as $modelId): ?>
+                    <option value="<?= h($modelId) ?>" <?= $assistantModel === $modelId ? 'selected' : '' ?>><?= h($modelId . ($modelId === $recommendedAssistantModel ? ' (recommended)' : '')) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <p class="muted">Detected from the currently configured OpenAI account. Recommended favors stronger general-purpose models for academic research assistant work.</p>
+        <?php else: ?>
+            <input id="assistant-model" value="<?= h($assistantModel) ?>" placeholder="gpt-4o-mini">
+            <p class="muted">Could not detect models right now, so you can still enter one manually.</p>
+        <?php endif; ?>
         <div class="actions">
             <button class="btn" id="assistant-settings-save" type="button">Save Assistant Settings</button>
         </div>

@@ -10,11 +10,11 @@ function formatter_include_pages(): bool
 
 function format_citation(array $source, string $format): string
 {
-    $format = strtolower(trim($format));
+    $format = normalize_citation_format($format);
 
     return match ($format) {
         'mla' => format_mla($source),
-        'chicago' => format_chicago($source),
+        'chicago18' => format_chicago18($source),
         default => format_apa($source),
     };
 }
@@ -42,6 +42,140 @@ function format_author_list(array $authors, string $style): string
     $last = array_pop($authors);
 
     return implode(', ', $authors) . ', and ' . $last;
+}
+
+function formatter_source_type(array $source): string
+{
+    $type = strtolower(trim((string) ($source['type'] ?? 'other')));
+
+    return match ($type) {
+        'article', 'journalarticle', 'conferencepaper', 'inproceedings', 'preprint', 'report' => 'article',
+        'book', 'monograph' => 'book',
+        'video', 'film', 'movie', 'podcast' => 'video',
+        'website', 'webpage', 'blogpost', 'blog-post' => 'website',
+        default => $type !== '' ? $type : 'other',
+    };
+}
+
+function formatter_trim_title(string $title): string
+{
+    return trim(rtrim($title, " \t\n\r\0\x0B."));
+}
+
+function formatter_sentence(string $text): string
+{
+    $text = trim($text);
+    if ($text === '') {
+        return '';
+    }
+
+    return rtrim($text, " \t\n\r\0\x0B.") . '.';
+}
+
+function formatter_quoted_title(string $title): string
+{
+    $title = formatter_trim_title($title);
+    if ($title === '') {
+        return '';
+    }
+
+    return '"' . $title . '."';
+}
+
+function formatter_identifier_link(string $doi, string $url): string
+{
+    $doi = trim($doi);
+    if ($doi !== '') {
+        $doi = preg_replace('~^(https?://)?(dx\.)?doi\.org/~i', '', $doi) ?? $doi;
+
+        return formatter_sentence('https://doi.org/' . ltrim($doi, '/'));
+    }
+
+    $safeUrl = safe_external_url(trim($url));
+    if ($safeUrl !== '') {
+        return formatter_sentence($safeUrl);
+    }
+
+    return '';
+}
+
+function formatter_accessed_date(string $raw): string
+{
+    $raw = trim($raw);
+    if ($raw === '') {
+        return '';
+    }
+
+    $timestamp = strtotime($raw);
+    if ($timestamp === false) {
+        return formatter_sentence('Accessed ' . $raw);
+    }
+
+    return formatter_sentence('Accessed ' . date('F j, Y', $timestamp));
+}
+
+function formatter_split_author_name(string $author): array
+{
+    $author = trim(preg_replace('/\s+/u', ' ', $author) ?? $author);
+    if ($author === '' || str_contains($author, ',')) {
+        return ['', $author];
+    }
+
+    $parts = preg_split('/\s+/u', $author) ?: [];
+    if (count($parts) <= 1) {
+        return ['', $author];
+    }
+
+    $particles = ['da', 'de', 'del', 'della', 'der', 'di', 'du', 'la', 'le', 'st.', 'st', 'van', 'von'];
+    $family = [array_pop($parts)];
+    while ($parts !== []) {
+        $candidate = strtolower((string) end($parts));
+        if (!in_array($candidate, $particles, true)) {
+            break;
+        }
+        array_unshift($family, (string) array_pop($parts));
+    }
+
+    return [implode(' ', $parts), implode(' ', $family)];
+}
+
+function formatter_chicago18_name(string $author, bool $invert): string
+{
+    $author = trim($author);
+    if ($author === '') {
+        return '';
+    }
+    if (!$invert || str_contains($author, ',')) {
+        return $author;
+    }
+
+    [$given, $family] = formatter_split_author_name($author);
+    if ($family === '') {
+        return $author;
+    }
+
+    return $given !== '' ? $family . ', ' . $given : $family;
+}
+
+function format_chicago18_bibliography_authors(array $authors): string
+{
+    $authors = array_values(array_filter(array_map('trim', $authors)));
+    if ($authors === []) {
+        return '';
+    }
+
+    $formatted = [];
+    foreach ($authors as $index => $author) {
+        $formatted[] = formatter_chicago18_name($author, $index === 0);
+    }
+
+    if (count($formatted) === 1) {
+        return $formatted[0];
+    }
+
+    $last = array_pop($formatted);
+
+    return implode(', ', $formatted) . ', and ' . $last;
 }
 
 function format_apa(array $s): string
@@ -157,9 +291,10 @@ function format_mla(array $s): string
     return trim(implode(' ', $chunks));
 }
 
-function format_chicago(array $s): string
+function format_chicago18(array $s): string
 {
-    $author = format_author_list($s['authors'] ?? [], 'mla');
+    $type = formatter_source_type($s);
+    $author = format_chicago18_bibliography_authors($s['authors'] ?? []);
     $title = trim((string) ($s['title'] ?? ''));
     $journal = trim((string) ($s['journal'] ?? ''));
     $publisher = trim((string) ($s['publisher'] ?? ''));
@@ -172,19 +307,37 @@ function format_chicago(array $s): string
     }
     $doi = trim((string) ($s['doi'] ?? ''));
     $url = trim((string) ($s['url'] ?? ''));
+    $accessedAt = trim((string) ($s['accessed_at'] ?? ''));
+    $hasJournal = $journal !== '';
+    $hasUrl = $url !== '';
+    $isArticleLike = $type === 'article' || $hasJournal;
+    $isWebsiteLike = $type === 'website' || (!$isArticleLike && $hasUrl && $type !== 'book' && $type !== 'video');
 
     $chunks = [];
     if ($author !== '') {
-        $chunks[] = $author . '.';
-    }
-    if ($title !== '') {
-        $chunks[] = '"' . $title . '."';
+        $chunks[] = formatter_sentence($author);
     }
 
-    if ($journal !== '') {
+    if ($isArticleLike || $isWebsiteLike) {
+        $quotedTitle = formatter_quoted_title($title);
+        if ($quotedTitle !== '') {
+            $chunks[] = $quotedTitle;
+        }
+    } else {
+        $plainTitle = formatter_sentence(formatter_trim_title($title));
+        if ($plainTitle !== '') {
+            $chunks[] = $plainTitle;
+        }
+    }
+
+    if ($type === 'video') {
+        $chunks[] = 'Video.';
+    }
+
+    if ($isArticleLike) {
         $journalLine = $journal;
         if ($volume !== '') {
-            $journalLine .= ' ' . $volume;
+            $journalLine .= ($journalLine !== '' ? ' ' : '') . $volume;
         }
         if ($issue !== '') {
             $journalLine .= ', no. ' . $issue;
@@ -195,21 +348,45 @@ function format_chicago(array $s): string
         if ($pages !== '') {
             $journalLine .= ': ' . $pages;
         }
-        $chunks[] = $journalLine . '.';
+        if ($journalLine === '') {
+            $journalLine = implode(', ', array_values(array_filter([$publisher, $year], static fn (string $value): bool => $value !== '')));
+        }
+        $journalLine = formatter_sentence($journalLine);
+        if ($journalLine !== '') {
+            $chunks[] = $journalLine;
+        }
+    } elseif ($isWebsiteLike) {
+        $siteLine = implode(', ', array_values(array_filter([
+            $journal !== '' ? $journal : $publisher,
+            $year,
+        ], static fn (string $value): bool => $value !== '')));
+        $siteLine = formatter_sentence($siteLine);
+        if ($siteLine !== '') {
+            $chunks[] = $siteLine;
+        }
+        $accessedLine = formatter_accessed_date($accessedAt);
+        if ($accessedLine !== '') {
+            $chunks[] = $accessedLine;
+        }
     } else {
-        $bookLine = trim($publisher . ' ' . $year);
+        $bookLine = implode(', ', array_values(array_filter([$publisher, $year], static fn (string $value): bool => $value !== '')));
+        $bookLine = formatter_sentence($bookLine);
         if ($bookLine !== '') {
-            $chunks[] = $bookLine . '.';
+            $chunks[] = $bookLine;
         }
     }
 
-    if ($doi !== '') {
-        $chunks[] = 'https://doi.org/' . $doi . '.';
-    } elseif ($url !== '') {
-        $chunks[] = $url . '.';
+    $identifier = formatter_identifier_link($doi, $url);
+    if ($identifier !== '') {
+        $chunks[] = $identifier;
     }
 
     return trim(implode(' ', $chunks));
+}
+
+function format_chicago(array $s): string
+{
+    return format_chicago18($s);
 }
 
 function source_to_array(array $row): array
@@ -278,10 +455,13 @@ function source_to_array(array $row): array
 
 function citation_cache_for_source(array $source): array
 {
+    $chicago18 = format_citation($source, 'chicago18');
+
     return [
         'apa' => format_citation($source, 'apa'),
         'mla' => format_citation($source, 'mla'),
-        'chicago' => format_citation($source, 'chicago'),
+        'chicago18' => $chicago18,
+        'chicago' => $chicago18,
     ];
 }
 

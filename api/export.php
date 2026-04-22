@@ -10,10 +10,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     json_response(['error' => 'Method not allowed'], 405);
 }
 
-$format = strtolower(trim((string) ($_GET['format'] ?? current_citation_format())));
-if (!in_array($format, ['apa', 'mla', 'chicago'], true)) {
-    $format = 'apa';
-}
+$format = normalize_citation_format((string) ($_GET['format'] ?? current_citation_format()));
 
 $sourceId = (int) ($_GET['id'] ?? 0);
 

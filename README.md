@@ -51,8 +51,8 @@ Input is detected automatically and routed through the appropriate pipeline, in 
 
 ### Citation + Formatting
 
-- Citation formats: APA, MLA, Chicago.
-- Runtime format switching in Settings.
+- Citation formats: APA, MLA, Chicago 18.
+- Runtime format switching from the shared header.
 - Toggle to include/exclude page numbers in formatted output.
 - Citation cache regeneration on source/settings changes.
 - Per-source `[ Cite ]` copy action and full bibliography copy block.
