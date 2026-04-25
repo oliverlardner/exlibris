@@ -267,7 +267,7 @@ function openai_extract_source(string $input, ?string $url = null): ?array
     ];
 }
 
-function openai_json_response(string $systemPrompt, string $userPrompt): ?array
+function openai_json_response(string $systemPrompt, string $userPrompt, ?float $temperature = null, ?int $maxTokens = null): ?array
 {
     $apiKey = effective_openai_api_key();
     if ($apiKey === '') {
@@ -276,13 +276,16 @@ function openai_json_response(string $systemPrompt, string $userPrompt): ?array
 
     $payload = [
         'model' => (string) openai_config_value('ai', 'chat_model', 'gpt-4o-mini'),
-        'temperature' => 0.2,
+        'temperature' => $temperature !== null ? $temperature : 0.2,
         'response_format' => ['type' => 'json_object'],
         'messages' => [
             ['role' => 'system', 'content' => $systemPrompt],
             ['role' => 'user', 'content' => $userPrompt],
         ],
     ];
+    if ($maxTokens !== null && $maxTokens > 0) {
+        $payload['max_tokens'] = $maxTokens;
+    }
 
     $data = http_post_json(
         'https://api.openai.com/v1/chat/completions',

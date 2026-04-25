@@ -168,7 +168,7 @@ render_header('Bibliography');
                         </span>
                     <?php endif; ?>
                 </h2>
-                <p class="citation"><?= h($citation) ?></p>
+                <?php render_citation_with_copy($citation); ?>
                 <div class="meta">
                     <span><?= h($source['type']) ?></span>
                     <?php if ($source['year'] !== ''): ?><span><?= h($source['year']) ?></span><?php endif; ?>
@@ -190,7 +190,6 @@ render_header('Bibliography');
                         >Visit</a>
                     <?php endif; ?>
                     <button type="button" class="btn btn-load" data-zotero-push-id="<?= (int) $source['id'] ?>">Push Zotero</button>
-                    <button type="button" class="btn btn-cite" data-copy-citation="<?= h($citation) ?>">Cite</button>
                     <button type="button" class="btn btn-danger" data-delete-id="<?= (int) $source['id'] ?>">Delete</button>
                 </div>
             </article>

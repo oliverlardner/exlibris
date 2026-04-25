@@ -47,7 +47,7 @@ render_header('Source');
 
     <article class="card">
         <h2>Citation</h2>
-        <p class="citation"><?= h($citation) ?></p>
+        <?php render_citation_with_copy($citation); ?>
         <div class="meta">
             <?php if (($source['origin_provider'] ?? '') === 'zotero'): ?><span class="badge-zotero">Zotero Imported</span><?php endif; ?>
             <?php foreach ($projects as $project): ?>
@@ -68,9 +68,105 @@ render_header('Source');
                     data-body-chars="<?= (int) mb_strlen($bodyText) ?>"
                 >AI Clean Text</button>
             <?php endif; ?>
+            <a class="btn btn-secondary" href="/reader.php?ids=<?= (int) $source['id'] ?>">Reader</a>
             <button type="button" class="btn btn-load" id="zotero-push-source-btn" data-source-id="<?= (int) $source['id'] ?>">Push Zotero</button>
         </div>
     </article>
+    <?php
+    $readerSnap = is_array($source['reader_synthesis'] ?? null) ? $source['reader_synthesis'] : [];
+    $readerSyn = is_array($readerSnap['synthesis'] ?? null) ? $readerSnap['synthesis'] : [];
+    $readerUpdated = trim((string) ($readerSnap['updated_at'] ?? ''));
+    $readerContextSaved = trim((string) ($readerSnap['research_context'] ?? ''));
+    $hasReaderContent = $readerSyn !== [] || $readerContextSaved !== '' || $readerUpdated !== '';
+    ?>
+    <article class="card stack">
+            <h2>Reader synthesis</h2>
+            <?php if (!$hasReaderContent): ?>
+                <p class="muted">No reader brief stored yet. Open the <a href="/reader.php?ids=<?= (int) $source['id'] ?>">Reader</a> with this source selected and run synthesis to attach notes here.</p>
+            <?php else: ?>
+            <?php if ($readerContextSaved !== ''): ?>
+                <p class="muted"><strong>Research context</strong> (when run): <?= h($readerContextSaved) ?></p>
+            <?php else: ?>
+                <p class="muted">Last run used <strong>general reading</strong> mode (no research context).</p>
+            <?php endif; ?>
+            <?php if ($readerUpdated !== ''): ?>
+                <p class="muted"><?= h($readerUpdated) ?></p>
+            <?php endif; ?>
+            <?php if ($readerSyn !== []): ?>
+                <?php if (trim((string) ($readerSyn['verdict'] ?? '')) !== ''): ?>
+                    <p><strong>Verdict:</strong> <?= h(strtoupper((string) ($readerSyn['verdict'] ?? ''))) ?>
+                        <?php if (trim((string) ($readerSyn['verdict_reason'] ?? '')) !== ''): ?>
+                            — <?= h((string) $readerSyn['verdict_reason']) ?>
+                        <?php endif; ?>
+                    </p>
+                <?php endif; ?>
+                <?php if (trim((string) ($readerSyn['why_now'] ?? '')) !== ''): ?>
+                    <p><?= h((string) $readerSyn['why_now']) ?></p>
+                <?php endif; ?>
+                <?php
+                $co = trim((string) ($readerSyn['companion_overview'] ?? ''));
+                $cd = trim((string) ($readerSyn['companion_deeper_context'] ?? ''));
+                $ct = trim((string) ($readerSyn['companion_reading_tips'] ?? ''));
+                ?>
+                <?php if ($co !== '' || $cd !== '' || $ct !== ''): ?>
+                    <h3>Reading companion</h3>
+                    <?php if ($co !== ''): ?>
+                        <p><strong>Overview</strong></p>
+                        <p><?= nl2br(h($co)) ?></p>
+                    <?php endif; ?>
+                    <?php if ($cd !== ''): ?>
+                        <p><strong>Context &amp; background</strong></p>
+                        <p class="muted"><?= nl2br(h($cd)) ?></p>
+                    <?php endif; ?>
+                    <?php if ($ct !== ''): ?>
+                        <p><strong>How to get the most from this source</strong></p>
+                        <p><?= nl2br(h($ct)) ?></p>
+                    <?php endif; ?>
+                <?php endif; ?>
+            <?php else: ?>
+                <p class="muted">Run the reader from the Reader page with this source selected to generate a brief.</p>
+            <?php endif; ?>
+            <?php endif; ?>
+        </article>
+    <?php
+    $aiSummary = trim((string) ($source['ai_summary'] ?? ''));
+    $aiClaims = is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [];
+    $aiMethods = is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [];
+    $aiLimits = is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [];
+    $hasAiCard = $aiSummary !== '' || $aiClaims !== [] || $aiMethods !== [] || $aiLimits !== [];
+    ?>
+    <?php if ($hasAiCard): ?>
+        <article class="card stack source-ai-annotation">
+            <h2>AI reading guide <span class="muted">(saved on this source)</span></h2>
+            <?php if ($aiSummary !== ''): ?>
+                <div class="ai-reading-guide"><?php render_ai_reading_summary($aiSummary); ?></div>
+            <?php endif; ?>
+            <?php if ($aiClaims !== []): ?>
+                <p><strong>Key claims</strong></p>
+                <ul>
+                    <?php foreach ($aiClaims as $c): ?>
+                        <li><?= h((string) $c) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+            <?php if ($aiMethods !== []): ?>
+                <p><strong>Methods / approach</strong></p>
+                <ul>
+                    <?php foreach ($aiMethods as $m): ?>
+                        <li><?= h((string) $m) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+            <?php if ($aiLimits !== []): ?>
+                <p><strong>Limitations</strong></p>
+                <ul>
+                    <?php foreach ($aiLimits as $l): ?>
+                        <li><?= h((string) $l) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </article>
+    <?php endif; ?>
     <?php if ($pdfPath !== ''): ?>
         <article class="card stack">
             <h2>PDF</h2>
@@ -167,14 +263,14 @@ render_header('Source');
     <?php endif; ?>
     <article class="card stack">
         <h2>Assistant Copilot</h2>
-        <p class="muted">Run source-quality scoring, annotation, citation QA, and similar-source lookup.</p>
+        <p class="muted">Run a substantive AI reading guide, source-quality scoring, citation QA, and similar-source lookup.</p>
         <div class="actions">
-            <button type="button" class="btn btn-load" id="assistant-annotate-btn" data-source-id="<?= (int) $source['id'] ?>">Annotate</button>
+            <button type="button" class="btn btn-load" id="assistant-annotate-btn" data-source-id="<?= (int) $source['id'] ?>">Reading guide</button>
             <button type="button" class="btn btn-copy" id="assistant-quality-btn" data-source-id="<?= (int) $source['id'] ?>">Quality</button>
             <button type="button" class="btn btn-copy" id="assistant-citation-qa-btn" data-source-id="<?= (int) $source['id'] ?>">Citation QA</button>
             <button type="button" class="btn btn-copy" id="assistant-similar-btn" data-source-id="<?= (int) $source['id'] ?>">Similar</button>
         </div>
-        <pre id="assistant-source-output" class="muted"></pre>
+        <div id="assistant-source-output" class="assistant-source-output stack" aria-live="polite"></div>
     </article>
     <p id="app-status" class="muted"></p>
 </section>

@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS sources (
     zotero_item_key TEXT NOT NULL DEFAULT '',
     zotero_version BIGINT NULL,
     zotero_synced_at TIMESTAMPTZ NULL,
+    body_text TEXT NOT NULL DEFAULT '',
+    body_fetched_at TIMESTAMPTZ NULL,
+    body_source TEXT NOT NULL DEFAULT '',
+    pdf_path TEXT NOT NULL DEFAULT '',
+    reader_synthesis JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

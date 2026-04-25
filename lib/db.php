@@ -112,6 +112,7 @@ function ensure_schema(PDO $pdo): void
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS body_source TEXT NOT NULL DEFAULT \'\'');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS lookup_trace JSONB NOT NULL DEFAULT \'[]\'::jsonb');
     $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS provenance_summary TEXT NOT NULL DEFAULT \'\'');
+    $pdo->exec('ALTER TABLE sources ADD COLUMN IF NOT EXISTS reader_synthesis JSONB NOT NULL DEFAULT \'{}\'::jsonb');
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS source_project (
             source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -577,6 +578,7 @@ function save_source(array $source): array
         'zotero_version' => $pick('zotero_version', null),
         'zotero_synced_at' => (string) $pick('zotero_synced_at', ''),
         'pdf_path' => (string) $pick('pdf_path', ''),
+        'reader_synthesis' => json_encode(is_array($pick('reader_synthesis', [])) ? $pick('reader_synthesis', []) : [], JSON_UNESCAPED_UNICODE),
         'updated_at' => $now,
     ];
 
@@ -600,6 +602,7 @@ function save_source(array $source): array
                 zotero_version=NULLIF(CAST(:zotero_version AS text), \'\')::bigint,
                 zotero_synced_at=NULLIF(:zotero_synced_at, \'\')::timestamptz,
                 pdf_path=:pdf_path,
+                reader_synthesis=CAST(:reader_synthesis AS jsonb),
                 updated_at=:updated_at
              WHERE id=:id'
         );
@@ -613,14 +616,14 @@ function save_source(array $source): array
                 accessed_at,raw_input,notes,lookup_trace,provenance_summary,body_text,body_fetched_at,body_source,citation_cache,quality_score,quality_reason,
                 ai_summary,ai_claims,ai_methods,ai_limitations,theme_labels,
                 origin_provider,origin_external_id,origin_updated_at,zotero_item_key,zotero_version,zotero_synced_at,
-                pdf_path,
+                pdf_path,reader_synthesis,
                 created_at,updated_at
             ) VALUES (
                 :type,:title,CAST(:authors AS jsonb),:year,:publisher,:journal,:volume,:issue,:pages,:doi,:isbn,:url,
                 :accessed_at,:raw_input,:notes,CAST(:lookup_trace AS jsonb),:provenance_summary,:body_text,NULLIF(:body_fetched_at, \'\')::timestamptz,:body_source,CAST(:citation_cache AS jsonb),:quality_score,:quality_reason,
                 :ai_summary,CAST(:ai_claims AS jsonb),CAST(:ai_methods AS jsonb),CAST(:ai_limitations AS jsonb),CAST(:theme_labels AS jsonb),
                 :origin_provider,:origin_external_id,NULLIF(:origin_updated_at, \'\')::timestamptz,:zotero_item_key,NULLIF(CAST(:zotero_version AS text), \'\')::bigint,NULLIF(:zotero_synced_at, \'\')::timestamptz,
-                :pdf_path,
+                :pdf_path,CAST(:reader_synthesis AS jsonb),
                 :created_at,:updated_at
             ) RETURNING id'
         );

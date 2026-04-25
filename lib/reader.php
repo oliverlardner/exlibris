@@ -209,19 +209,49 @@ function reader_synthesize(array $dossier, string $context, array &$trace): arra
                         'required' => ['title', 'authors', 'year', 'url', 'why_relevant', 'provider'],
                     ],
                 ],
+                'companion_overview' => [
+                    'type' => 'string',
+                    'description' => 'What this material is, genre, and why someone might read it. Ground in selected_sources; may name entities from the excerpt.',
+                ],
+                'companion_deeper_context' => [
+                    'type' => 'string',
+                    'description' => 'Background, historical context, or field positioning to help a reader. May use web_search tool knowledge; label uncertainty; not a substitute for the source text.',
+                ],
+                'companion_reading_tips' => [
+                    'type' => 'string',
+                    'description' => 'How to get the most from this source: what to look for, questions to ask, suggested order if long. At least 2-3 concrete tips when the source has any body text or metadata.',
+                ],
             ],
-            'required' => ['verdict', 'verdict_reason', 'why_now', 'claims', 'evidence', 'connections', 'open_questions', 'cautions', 'external_candidates'],
+            'required' => [
+                'verdict',
+                'verdict_reason',
+                'why_now',
+                'claims',
+                'evidence',
+                'connections',
+                'open_questions',
+                'cautions',
+                'external_candidates',
+                'companion_overview',
+                'companion_deeper_context',
+                'companion_reading_tips',
+            ],
         ],
     ];
 
-    $system = 'You are an L1 research reader. Compress context for a human researcher. '
-        . 'Use extractive evidence from the provided source dossier where possible. '
-        . 'If introducing facts from outside the dossier, include them as external_candidates with a URL. '
-        . 'Treat selected_sources as the only texts being evaluated. Verdict, verdict_reason, why_now, claims, evidence, connections, open_questions, and cautions must be based only on selected_sources. '
-        . 'Do not use scholarly_candidates or any external material to justify the verdict or the reader notes. Those are suggestions only and belong only in external_candidates. '
-        . 'Be explicit when the selected_sources do not actually bear on the stated research context. '
-        . 'Prefer concise, decision-useful output.';
-    $user = "Research context:\n" . ($context !== '' ? $context : '(none provided)')
+    $contextMode = $context === '' ? 'general' : 'research';
+    $system = 'You are an expert research reader. You have two jobs that both appear in the JSON output. '
+        . 'JOB A — RESEARCH-ALIGNED BRIEF: For verdict, verdict_reason, why_now, claims, evidence, connections, open_questions, and cautions, treat selected_sources in the dossier as the only texts you are evaluating. '
+        . 'Ground those fields in the supplied excerpts, metadata, and in-source notes. Do not justify verdict or these reader-brief items using scholarly_candidates or the web. '
+        . 'If the user stated a research context and the sources are off-topic, verdict may be "ignore" for that project — but you must still provide substantive JOB B. '
+        . 'JOB B — READING COMPANION: companion_overview, companion_deeper_context, and companion_reading_tips help a human get value from the material. '
+        . 'Always fill all three with useful prose (not placeholders). If verdict is "ignore" for the research question, the companion must still help the reader with context, history, and how to read the work. '
+        . 'In companion_deeper_context you may bring in well-known background from web search and general knowledge; be explicit that this is external framing, not a claim the source made. '
+        . 'If research context is empty, assume the user is simply engaging with the material: prioritize JOB B, use titles and excerpt to find related reading for external_candidates, and use verdict to suggest read/skim/ignore for time/utility as a general reader (not "ignore" the companion content). '
+        . 'If introducing facts for JOB B, also add a relevant external_candidates entry with a real URL when possible. '
+        . 'Be concise, honest about limits of the cached excerpt, and avoid empty output.';
+    $user = "Mode: {$contextMode} (\"general\" = no user research context; still deliver a full reading companion and external_candidates).\n"
+        . "Research context:\n" . ($context !== '' ? $context : '(none — treat as general reading; enrich with companion fields and web-friendly leads)')
         . "\n\nDossier JSON:\n" . json_encode($dossier, JSON_UNESCAPED_UNICODE);
 
     $response = openai_responses_with_web_search($system, $user, $schema);
@@ -243,8 +273,10 @@ function reader_synthesize(array $dossier, string $context, array &$trace): arra
     ];
 
     $fallback = openai_json_response(
-        'Return JSON with keys verdict, verdict_reason, why_now, claims, evidence, connections, open_questions, cautions, external_candidates. '
-        . 'Each key must exist. Ground verdict and reader notes only in selected_sources. Use scholarly_candidates only as external_candidates suggestions.',
+        'Return JSON with keys verdict, verdict_reason, why_now, claims, evidence, connections, open_questions, cautions, external_candidates, '
+        . 'companion_overview, companion_deeper_context, companion_reading_tips. Each key must exist. '
+        . 'Ground the research-brief fields (verdict through cautions) only in selected_sources. '
+        . 'companion_* may include general/world context to help the reader. Never leave companion fields empty if any source text or metadata is present.',
         $user
     );
     if (!is_array($fallback)) {
@@ -438,6 +470,9 @@ function reader_empty_synthesis(): array
         'open_questions' => [],
         'cautions' => ['Reader synthesis returned no structured output.'],
         'external_candidates' => [],
+        'companion_overview' => '',
+        'companion_deeper_context' => '',
+        'companion_reading_tips' => '',
     ];
 }
 
@@ -455,6 +490,9 @@ function reader_normalize_synthesis(array $raw, array $dossier): array
     $out['open_questions'] = is_array($raw['open_questions'] ?? null) ? array_values(array_map('strval', $raw['open_questions'])) : [];
     $out['cautions'] = is_array($raw['cautions'] ?? null) ? array_values(array_map('strval', $raw['cautions'])) : [];
     $out['external_candidates'] = is_array($raw['external_candidates'] ?? null) ? array_values($raw['external_candidates']) : [];
+    $out['companion_overview'] = trim((string) ($raw['companion_overview'] ?? ''));
+    $out['companion_deeper_context'] = trim((string) ($raw['companion_deeper_context'] ?? ''));
+    $out['companion_reading_tips'] = trim((string) ($raw['companion_reading_tips'] ?? ''));
 
     $validSourceIds = [];
     foreach ((array) ($dossier['sources'] ?? []) as $source) {

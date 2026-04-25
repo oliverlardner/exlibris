@@ -5,6 +5,34 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/formatter.php';
 require_once __DIR__ . '/reader.php';
 
+/**
+ * @param int[] $selectedSourceIds
+ */
+function reader_persist_synthesis_to_sources(array $selectedSourceIds, string $context, array $synthesis): void
+{
+    if ($synthesis === []) {
+        return;
+    }
+    $snapshot = [
+        'research_context' => $context,
+        'updated_at' => gmdate('c'),
+        'synthesis' => $synthesis,
+    ];
+    foreach ($selectedSourceIds as $rawId) {
+        $id = (int) $rawId;
+        if ($id <= 0) {
+            continue;
+        }
+        $row = get_source($id);
+        if (!is_array($row)) {
+            continue;
+        }
+        $source = source_to_array($row);
+        $source['reader_synthesis'] = $snapshot;
+        save_source($source);
+    }
+}
+
 function assistant_handle_reader_synthesis(array $payload): array
 {
     $sourceIds = is_array($payload['source_ids'] ?? null) ? $payload['source_ids'] : [];
@@ -53,6 +81,12 @@ function assistant_handle_reader_synthesis(array $payload): array
     if (isset($synthesis['usage'])) {
         unset($synthesis['usage']);
     }
+
+    $selectedIdsForStore = array_values(array_filter(
+        array_map(static fn (array $s): int => (int) ($s['id'] ?? 0), $primarySources),
+        static fn (int $id): bool => $id > 0
+    ));
+    reader_persist_synthesis_to_sources($selectedIdsForStore, $context, $synthesis);
 
     $compactSources = static function (array $sourcesList): array {
         return array_values(array_map(static function (array $source): array {

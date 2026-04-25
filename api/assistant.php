@@ -116,11 +116,38 @@ try {
         if (!is_array($row)) {
             json_response(['ok' => false, 'error' => 'Source not found'], 404);
         }
+        if (effective_openai_api_key() === '') {
+            json_response(['ok' => false, 'error' => 'OpenAI API key is not configured. Add it in Settings first.'], 503);
+        }
         $source = source_to_array($row);
-        $prompt = "Source:\n" . json_encode($source, JSON_UNESCAPED_UNICODE);
+        $body = trim((string) ($source['body_text'] ?? ''));
+        $forPrompt = $source;
+        if ($body !== '') {
+            $maxBody = 48000;
+            if (mb_strlen($body) > $maxBody) {
+                $forPrompt['body_text'] = mb_substr($body, 0, $maxBody) . "\n[... " . (mb_strlen($body) - $maxBody) . " more characters truncated ...]";
+            } else {
+                $forPrompt['body_text'] = $body;
+            }
+        } else {
+            $forPrompt['body_text'] = '';
+        }
+        $prompt = "The JSON describes a source. The body_text field is an excerpt of extracted full text (if any). Read it as a human would and write a substantive guide.\n"
+            . json_encode($forPrompt, JSON_UNESCAPED_UNICODE);
+        $system = 'You are writing a "mini reader" for someone engaging with a source: warm, clear, and intellectually serious — like a skilled reading companion, not a sparse abstract. '
+            . 'Return JSON with keys: summary (string), key_claims (array of strings), methods (array of strings), limitations (array of strings). '
+            . 'The summary is the main piece: a long, sectioned reading guide (roughly 500–1200 words if the excerpt is long enough; shorter only when the text is very short or missing). '
+            . 'In summary, use markdown-style section breaks: start optional opening paragraphs, then add lines of the form "## Section title" (newline before ##) to separate major sections. '
+            . 'Include sections that fit the material, e.g. "## What this is", "## The through-line", "## Structure and moves", "## Methods or evidence" (as appropriate to genre), "## How to read it", "## Open questions" — adapt to the actual source; use at least three ## sections when the excerpt is substantial. '
+            . 'Use blank lines between paragraphs. Ground every concrete claim in the excerpt or metadata; if inferring, say so. '
+            . 'key_claims: 5–10 items, each 2–4 full sentences, each capturing one important claim or move with enough context to be useful. '
+            . 'methods: 3–7 items, each 2–4 sentences (genre, data, mode of argument, etc.). limitations: 3–7 items, each 2–3 sentences. '
+            . 'If body_text is empty, write a briefer guide from metadata and title only and say clearly that the full text was not available.';
         $response = openai_json_response(
-            'Return JSON with keys: summary (string), key_claims (array), methods (array), limitations (array).',
-            $prompt
+            $system,
+            $prompt,
+            0.34,
+            5000
         ) ?? ['summary' => '', 'key_claims' => [], 'methods' => [], 'limitations' => []];
         $source['ai_summary'] = (string) ($response['summary'] ?? '');
         $source['ai_claims'] = is_array($response['key_claims'] ?? null) ? $response['key_claims'] : [];
@@ -128,7 +155,7 @@ try {
         $source['ai_limitations'] = is_array($response['limitations'] ?? null) ? $response['limitations'] : [];
         save_source($source);
         assistant_store_run($action, $sourceId, $source['title'], $response);
-        json_response(['ok' => true, 'annotation' => $response]);
+        json_response(['ok' => true, 'annotation' => $response, 'source_id' => $sourceId]);
     }
 
     if ($action === 'reformat_body_text') {

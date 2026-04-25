@@ -32,6 +32,7 @@ function render_header(string $title): void
                 <a href="/cleanup.php">Cleanup</a>
                 <a href="/digest.php">Digest</a>
                 <a href="/settings.php">Settings</a>
+                <a href="/styles.php">Styles</a>
             </nav>
             <label class="header-citation-control" for="citation-format">
                 <span>Style</span>
@@ -70,6 +71,9 @@ function render_footer(): void
 {
     ?>
     </main>
+    <div id="global-ai-activity" class="global-ai-activity hidden" role="status" aria-live="polite" aria-hidden="true" title="AI request in progress">
+        <pre id="global-ai-activity-ascii" class="global-ai-activity-ascii"></pre>
+    </div>
     <script src="/assets/app.js?v=<?= h(asset_version('app.js')) ?>"></script>
     </body>
     </html>

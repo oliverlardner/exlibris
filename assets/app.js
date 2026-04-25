@@ -41,46 +41,283 @@
     return headers;
   }
 
+  const AI_RUNNER_FRAMES = [
+    String.raw`  _o
+ /|_]
+  / \  [#]`,
+    String.raw`   _o
+ _/|]
+  / \  [#]`,
+    String.raw`    o_
+   [|\_
+   / \  [#]`,
+    String.raw`   _o
+  [| \_
+  / \   [#]`,
+  ];
+
+  let globalAiWorkCount = 0;
+  let globalAiRunnerTimer = null;
+  let globalAiRunnerFrame = 0;
+
+  function isAiTrackedRequestUrl(url) {
+    const s = (url || "").toString();
+    return s.includes("/api/assistant.php") || s.includes("/api/process.php");
+  }
+
+  function globalAiRunnerSetVisible(show) {
+    const wrap = qs("#global-ai-activity");
+    const pre = qs("#global-ai-activity-ascii");
+    if (!wrap || !pre) return;
+    if (show) {
+      wrap.classList.remove("hidden");
+      wrap.setAttribute("aria-hidden", "false");
+      globalAiRunnerFrame = 0;
+      pre.textContent = AI_RUNNER_FRAMES[0];
+      if (globalAiRunnerTimer) window.clearInterval(globalAiRunnerTimer);
+      globalAiRunnerTimer = window.setInterval(() => {
+        globalAiRunnerFrame = (globalAiRunnerFrame + 1) % AI_RUNNER_FRAMES.length;
+        if (pre) pre.textContent = AI_RUNNER_FRAMES[globalAiRunnerFrame];
+      }, 120);
+    } else {
+      wrap.classList.add("hidden");
+      wrap.setAttribute("aria-hidden", "true");
+      if (globalAiRunnerTimer) {
+        window.clearInterval(globalAiRunnerTimer);
+        globalAiRunnerTimer = null;
+      }
+      pre.textContent = "";
+    }
+  }
+
+  function globalAiRequestStart() {
+    globalAiWorkCount += 1;
+    if (globalAiWorkCount === 1) {
+      globalAiRunnerSetVisible(true);
+    }
+  }
+
+  function globalAiRequestEnd() {
+    globalAiWorkCount = Math.max(0, globalAiWorkCount - 1);
+    if (globalAiWorkCount === 0) {
+      globalAiRunnerSetVisible(false);
+    }
+  }
+
   async function postJson(url, payload) {
+    const trackAi = isAiTrackedRequestUrl(url);
+    if (trackAi) {
+      globalAiRequestStart();
+    }
     const transientCodes = new Set([502, 503, 504]);
     let lastError = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      let response = null;
-      let data = null;
-      try {
-        response = await fetch(endpoint(url), {
-          method: "POST",
-          headers: headersWithAuth(),
-          body: JSON.stringify(payload),
-        });
-      } catch (error) {
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        let response = null;
+        let data = null;
+        try {
+          response = await fetch(endpoint(url), {
+            method: "POST",
+            headers: headersWithAuth(),
+            body: JSON.stringify(payload),
+          });
+        } catch (error) {
+          lastError = error;
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+            continue;
+          }
+          throw error;
+        }
+        try {
+          data = await response.json();
+        } catch (_) {}
+        if (response.ok) {
+          return data || {};
+        }
+        const error = new Error(data?.error || `Request failed (${response.status})`);
         lastError = error;
-        if (attempt < 2) {
+        if (transientCodes.has(response.status) && attempt < 2) {
           await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
           continue;
         }
         throw error;
       }
-      try {
-        data = await response.json();
-      } catch (_) {}
-      if (response.ok) {
-        return data || {};
+      throw lastError || new Error("Request failed");
+    } finally {
+      if (trackAi) {
+        globalAiRequestEnd();
       }
-      const error = new Error(data?.error || `Request failed (${response.status})`);
-      lastError = error;
-      if (transientCodes.has(response.status) && attempt < 2) {
-        await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
-        continue;
-      }
-      throw error;
     }
-    throw lastError || new Error("Request failed");
   }
 
   function setText(selector, value) {
     const el = qs(selector);
     if (el) el.textContent = value || "";
+  }
+
+  function elFromOutSelector(outSelector) {
+    if (typeof outSelector === "string") {
+      return qs(outSelector);
+    }
+    return outSelector || null;
+  }
+
+  function appendMultilineBlock(parent, text) {
+    const div = document.createElement("div");
+    div.className = "ai-reading-block";
+    const s = String(text || "");
+    const lines = s.split("\n");
+    lines.forEach((line, i) => {
+      if (i) div.appendChild(document.createElement("br"));
+      div.appendChild(document.createTextNode(line));
+    });
+    parent.appendChild(div);
+  }
+
+  function appendReadingSummaryToParent(parent, raw) {
+    const text = String(raw || "")
+      .replace(/\r\n/g, "\n")
+      .trim();
+    if (!text) return;
+    if (!text.includes("\n## ")) {
+      appendMultilineBlock(parent, text);
+      return;
+    }
+    const parts = text.split(/\n##\s+/);
+    if (!parts || parts.length < 1) {
+      appendMultilineBlock(parent, text);
+      return;
+    }
+    const intro = parts[0] ? String(parts[0]).trim() : "";
+    if (intro) {
+      appendMultilineBlock(parent, intro);
+    }
+    for (let i = 1; i < parts.length; i++) {
+      const block = String(parts[i] || "").trim();
+      if (!block) continue;
+      const nl = block.indexOf("\n");
+      const title = (nl === -1 ? block : block.slice(0, nl)).trim();
+      const body = nl === -1 ? "" : block.slice(nl + 1).trim();
+      if (title) {
+        const h3 = document.createElement("h3");
+        h3.className = "ai-reading-h";
+        h3.textContent = title;
+        parent.appendChild(h3);
+      }
+      if (body) {
+        appendMultilineBlock(parent, body);
+      }
+    }
+  }
+
+  function renderSourceAssistantOutput(action, data, outSelector) {
+    const out = elFromOutSelector(outSelector);
+    if (!out) return;
+    out.innerHTML = "";
+    if (!data || data.ok === false) {
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = (data && data.error) || "Request failed.";
+      out.appendChild(p);
+      return;
+    }
+    const heading = (text) => {
+      const h3 = document.createElement("h3");
+      h3.textContent = text;
+      return h3;
+    };
+    const para = (text, className) => {
+      const p = document.createElement("p");
+      if (className) p.className = className;
+      p.textContent = text;
+      return p;
+    };
+    const addStringList = (title, items) => {
+      if (!Array.isArray(items) || !items.length) return;
+      out.appendChild(heading(title));
+      const ul = document.createElement("ul");
+      items.forEach((t) => {
+        const li = document.createElement("li");
+        li.textContent = String(t || "");
+        ul.appendChild(li);
+      });
+      out.appendChild(ul);
+    };
+    if (action === "annotate_source") {
+      const ann = data.annotation || {};
+      const guideWrap = document.createElement("div");
+      guideWrap.className = "ai-reading-guide";
+      if (ann.summary) {
+        out.appendChild(heading("Reading guide"));
+        appendReadingSummaryToParent(guideWrap, ann.summary);
+        out.appendChild(guideWrap);
+      }
+      addStringList("Key claims", ann.key_claims);
+      addStringList("Methods / approach", ann.methods);
+      addStringList("Limitations", ann.limitations);
+      out.appendChild(para("Saved on this source (see the reading guide on the page after refresh).", "muted"));
+      return;
+    }
+    if (action === "source_quality") {
+      const q = data.quality || {};
+      const scoreText = q.score != null && q.score !== "" ? String(q.score) : "—";
+      out.appendChild(para(`Score: ${scoreText} — ${q.reason || ""}`));
+      return;
+    }
+    if (action === "citation_qa") {
+      const qa = data.qa || {};
+      out.appendChild(para(String(qa.citation || "")));
+      const issues = Array.isArray(qa.issues) ? qa.issues : [];
+      if (issues.length) {
+        out.appendChild(heading("Issues"));
+        const ul = document.createElement("ul");
+        issues.forEach((i) => {
+          const li = document.createElement("li");
+          li.textContent = String(i);
+          ul.appendChild(li);
+        });
+        out.appendChild(ul);
+      }
+      out.appendChild(para(qa.pass ? "Pass" : "Needs attention", "muted"));
+      return;
+    }
+    if (action === "similar_sources") {
+      const results = data.results || [];
+      if (!results.length) {
+        out.appendChild(para("No similar sources found.", "muted"));
+        return;
+      }
+      out.appendChild(heading("Similar sources"));
+      results.forEach((item) => {
+        const s = (item && item.source) || {};
+        const id = Number(s.id || 0);
+        const row = document.createElement("div");
+        if (id) {
+          const a = document.createElement("a");
+          a.href = `/source.php?id=${id}`;
+          a.className = "reader-source-ref";
+          a.textContent = s.title || `Source #${id}`;
+          row.appendChild(a);
+        } else {
+          row.textContent = s.title || "Unknown";
+        }
+        if (item && item.score != null) {
+          row.appendChild(document.createTextNode(` (${Number(item.score).toFixed(3)})`));
+        }
+        out.appendChild(row);
+      });
+      return;
+    }
+    const pre = document.createElement("pre");
+    pre.className = "muted";
+    pre.textContent = JSON.stringify(data, null, 2);
+    out.appendChild(pre);
+  }
+
+  async function runSourceAssistant(action, payload, outSelector) {
+    const data = await postJson("/api/assistant.php", { action, ...payload });
+    renderSourceAssistantOutput(action, data, outSelector);
   }
 
   function renderSemanticResults(results) {
@@ -517,15 +754,39 @@
     }
 
     qsa("[data-copy-citation]").forEach((button) => {
-      const base = button.textContent;
+      const baseText = button.textContent.trim();
+      const isIconButton = !baseText && button.querySelector("svg");
+      const baseTitle = button.getAttribute("title") || "";
+      const baseLabel = button.getAttribute("aria-label") || baseTitle;
       button.addEventListener("click", async () => {
         try {
           await copyText(button.getAttribute("data-copy-citation") || "");
-          button.textContent = "Copied";
+          if (isIconButton) {
+            button.setAttribute("title", "Copied");
+            if (baseLabel) button.setAttribute("aria-label", "Copied");
+            setTimeout(() => {
+              if (baseTitle) button.setAttribute("title", baseTitle);
+              else button.removeAttribute("title");
+              if (baseLabel) button.setAttribute("aria-label", baseLabel);
+            }, 1200);
+          } else {
+            const prev = baseText;
+            button.textContent = "Copied";
+            setTimeout(() => (button.textContent = prev), 1200);
+          }
         } catch (_) {
-          button.textContent = "Copy failed";
-        } finally {
-          setTimeout(() => (button.textContent = base), 1200);
+          if (isIconButton) {
+            button.setAttribute("title", "Copy failed");
+            if (baseLabel) button.setAttribute("aria-label", "Copy failed");
+            setTimeout(() => {
+              if (baseTitle) button.setAttribute("title", baseTitle);
+              if (baseLabel) button.setAttribute("aria-label", baseLabel);
+            }, 1500);
+          } else {
+            const prev = baseText;
+            button.textContent = "Copy failed";
+            setTimeout(() => (button.textContent = prev), 1500);
+          }
         }
       });
     });
@@ -1401,6 +1662,16 @@
     setText(outSelector, JSON.stringify(data, null, 2));
   }
 
+  function showAssistantError(outSelector, message) {
+    const out = elFromOutSelector(outSelector);
+    if (!out) return;
+    out.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = message || "Request failed.";
+    out.appendChild(p);
+  }
+
   function wireAssistantPanels() {
     const semanticBtn = qs("#semantic-search-btn");
     if (semanticBtn) {
@@ -1449,27 +1720,55 @@
     });
 
     const annotateBtn = qs("#assistant-annotate-btn");
-    if (annotateBtn) annotateBtn.addEventListener("click", () => runAssistant("annotate_source", { source_id: Number(annotateBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) => setText("#assistant-source-output", e.message)));
+    if (annotateBtn)
+      annotateBtn.addEventListener("click", () =>
+        runSourceAssistant("annotate_source", { source_id: Number(annotateBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) =>
+          showAssistantError("#assistant-source-output", e.message)
+        )
+      );
     const qualityBtn = qs("#assistant-quality-btn");
-    if (qualityBtn) qualityBtn.addEventListener("click", () => runAssistant("source_quality", { source_id: Number(qualityBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) => setText("#assistant-source-output", e.message)));
+    if (qualityBtn)
+      qualityBtn.addEventListener("click", () =>
+        runSourceAssistant("source_quality", { source_id: Number(qualityBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) =>
+          showAssistantError("#assistant-source-output", e.message)
+        )
+      );
     const citationQaBtn = qs("#assistant-citation-qa-btn");
-    if (citationQaBtn) citationQaBtn.addEventListener("click", () => runAssistant("citation_qa", { source_id: Number(citationQaBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) => setText("#assistant-source-output", e.message)));
+    if (citationQaBtn)
+      citationQaBtn.addEventListener("click", () =>
+        runSourceAssistant("citation_qa", { source_id: Number(citationQaBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) =>
+          showAssistantError("#assistant-source-output", e.message)
+        )
+      );
     const similarBtn = qs("#assistant-similar-btn");
-    if (similarBtn) similarBtn.addEventListener("click", () => runAssistant("similar_sources", { source_id: Number(similarBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) => setText("#assistant-source-output", e.message)));
+    if (similarBtn)
+      similarBtn.addEventListener("click", () =>
+        runSourceAssistant("similar_sources", { source_id: Number(similarBtn.dataset.sourceId || 0) }, "#assistant-source-output").catch((e) =>
+          showAssistantError("#assistant-source-output", e.message)
+        )
+      );
 
     const claimBtn = qs("#claim-link-btn");
     if (claimBtn) claimBtn.addEventListener("click", () => runAssistant("link_claims", { draft: qs("#claim-draft")?.value || "" }, "#claim-link-results").catch((e) => setText("#claim-link-results", e.message)));
     const zoteroPushSourceBtn = qs("#zotero-push-source-btn");
-    if (zoteroPushSourceBtn) zoteroPushSourceBtn.addEventListener("click", async () => {
-      try {
-        const sourceId = Number(zoteroPushSourceBtn.dataset.sourceId || 0);
-        if (!sourceId) return;
-        const data = await postJson("/api/zotero.php", { mode: "push_one", source_id: sourceId });
-        setText("#assistant-source-output", JSON.stringify(data, null, 2));
-      } catch (error) {
-        setText("#assistant-source-output", error.message || "Push failed.");
-      }
-    });
+    if (zoteroPushSourceBtn)
+      zoteroPushSourceBtn.addEventListener("click", async () => {
+        try {
+          const sourceId = Number(zoteroPushSourceBtn.dataset.sourceId || 0);
+          if (!sourceId) return;
+          const data = await postJson("/api/zotero.php", { mode: "push_one", source_id: sourceId });
+          const out = qs("#assistant-source-output");
+          if (out) {
+            out.innerHTML = "";
+            const pre = document.createElement("pre");
+            pre.className = "muted";
+            pre.textContent = JSON.stringify(data, null, 2);
+            out.appendChild(pre);
+          }
+        } catch (error) {
+          showAssistantError("#assistant-source-output", error.message || "Push failed.");
+        }
+      });
   }
 
   function wireReaderPanel() {
@@ -1497,30 +1796,15 @@
     let loaderTimer = null;
     let loaderFrame = 0;
 
-    const loaderFrames = [
-      String.raw`  _o
- /|_]
-  / \  [#]`,
-      String.raw`   _o
- _/|]
-  / \  [#]`,
-      String.raw`    o_
-   [|\_
-   / \  [#]`,
-      String.raw`   _o
-  [| \_
-  / \   [#]`,
-    ];
-
     const startLoader = () => {
       if (!loaderPre) return;
       loaderPre.classList.remove("hidden");
       loaderFrame = 0;
-      loaderPre.textContent = loaderFrames[0];
+      loaderPre.textContent = AI_RUNNER_FRAMES[0];
       if (loaderTimer) window.clearInterval(loaderTimer);
       loaderTimer = window.setInterval(() => {
-        loaderFrame = (loaderFrame + 1) % loaderFrames.length;
-        loaderPre.textContent = loaderFrames[loaderFrame];
+        loaderFrame = (loaderFrame + 1) % AI_RUNNER_FRAMES.length;
+        loaderPre.textContent = AI_RUNNER_FRAMES[loaderFrame];
       }, 120);
     };
 
@@ -1637,6 +1921,17 @@
       pushLine(`Verdict: ${(synthesis.verdict || "skim").toUpperCase()}`);
       if (synthesis.verdict_reason) pushLine(`Reason: ${synthesis.verdict_reason}`);
       if (synthesis.why_now) pushLine(`Why now: ${synthesis.why_now}`);
+
+      const co = String(synthesis.companion_overview || "").trim();
+      const cd = String(synthesis.companion_deeper_context || "").trim();
+      const ct = String(synthesis.companion_reading_tips || "").trim();
+      if (co || cd || ct) {
+        pushLine("");
+        pushLine("Reading companion:");
+        if (co) pushLine(`  Overview: ${co}`);
+        if (cd) pushLine(`  Context & background: ${cd}`);
+        if (ct) pushLine(`  How to read: ${ct}`);
+      }
 
       if (Array.isArray(synthesis.claims) && synthesis.claims.length) {
         pushLine("");

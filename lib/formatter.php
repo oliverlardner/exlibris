@@ -449,6 +449,19 @@ function source_to_array(array $row): array
         'zotero_version' => isset($row['zotero_version']) ? (int) $row['zotero_version'] : null,
         'zotero_synced_at' => (string) ($row['zotero_synced_at'] ?? ''),
         'pdf_path' => (string) ($row['pdf_path'] ?? ''),
+        'reader_synthesis' => (static function (mixed $value): array {
+            if (is_array($value)) {
+                return $value;
+            }
+            if (is_string($value)) {
+                $decoded = json_decode($value, true);
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
+            }
+
+            return [];
+        })($row['reader_synthesis'] ?? []),
         'project_ids' => project_ids_for_source((int) $row['id']),
     ];
 }
@@ -484,4 +497,72 @@ function regenerate_all_citation_cache(): void
     foreach ($rows as $row) {
         regenerate_citation_cache_for_source((int) $row['id']);
     }
+}
+
+/**
+ * Renders a long-form AI reading summary. Supports optional ## section headings
+ * (markdown style) for a mini-reader layout.
+ */
+function render_ai_reading_summary(string $raw): void
+{
+    $raw = str_replace(["\r\n", "\r"], "\n", $raw);
+    $raw = trim($raw);
+    if ($raw === '') {
+        return;
+    }
+
+    if (!str_contains($raw, "\n## ")) {
+        echo '<div class="ai-reading-block">' . nl2br(h($raw)) . '</div>';
+
+        return;
+    }
+
+    $chunks = preg_split('/\n##\s+/', $raw, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($chunks) || $chunks === []) {
+        echo '<div class="ai-reading-block">' . nl2br(h($raw)) . '</div>';
+
+        return;
+    }
+
+    $intro = array_shift($chunks);
+    if (trim($intro) !== '') {
+        echo '<div class="ai-reading-block">' . nl2br(h(trim($intro))) . '</div>';
+    }
+
+    foreach ($chunks as $chunk) {
+        $lines = explode("\n", ltrim($chunk), 2);
+        $title = trim((string) ($lines[0] ?? ''));
+        $body = trim((string) ($lines[1] ?? ''));
+        if ($title !== '') {
+            echo '<h3 class="ai-reading-h">' . h($title) . '</h3>';
+        }
+        if ($body !== '') {
+            echo '<div class="ai-reading-block">' . nl2br(h($body)) . '</div>';
+        }
+    }
+}
+
+function render_citation_with_copy(string $citation): void
+{
+    if ($citation === '') {
+        echo '<p class="citation"></p>';
+
+        return;
+    }
+    ?>
+    <p class="citation">
+        <?= h($citation) ?><button
+            type="button"
+            class="source-icon-btn citation-copy-btn"
+            data-copy-citation="<?= h($citation) ?>"
+            title="Copy citation"
+            aria-label="Copy citation"
+        >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="8.5" y="8.5" width="11" height="11" rx="0" fill="none" stroke="currentColor" stroke-width="1.5" />
+                <rect x="3.5" y="3.5" width="11" height="11" rx="0" fill="none" stroke="currentColor" stroke-width="1.5" />
+            </svg>
+        </button>
+    </p>
+    <?php
 }
