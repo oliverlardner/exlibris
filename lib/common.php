@@ -35,6 +35,181 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/db.php';
 
+/**
+ * Best-effort exit code from proc_close() (Unix wait status vs Windows).
+ */
+function proc_close_exit_code(int $status): int
+{
+    if (PHP_OS_FAMILY === 'Windows') {
+        return $status;
+    }
+    if (function_exists('pcntl_wifexited') && pcntl_wifexited($status)) {
+        return pcntl_wexitstatus($status);
+    }
+
+    return $status !== 0 ? 1 : 0;
+}
+
+/**
+ * Environment for libpq-based CLI (pg_dump, psql, pg_restore) run via proc_open.
+ * PHP-FPM often passes an empty environment; without PATH, bare "pg_dump" is not found.
+ * Optional: EXLIBRIS_PGSSLMODE or PGSSLMODE for hosted Postgres.
+ */
+function exlibris_pg_proc_env(string $pgPassword): array
+{
+    $env = getenv();
+    if (!is_array($env) || $env === []) {
+        $env = is_array($_ENV) ? $_ENV : [];
+    }
+    $path = $env['PATH'] ?? null;
+    if (!is_string($path) || $path === '') {
+        $fromServer = $_SERVER['PATH'] ?? '';
+        if (is_string($fromServer) && $fromServer !== '') {
+            $env['PATH'] = $fromServer;
+        } elseif (PHP_OS_FAMILY === 'Windows') {
+            $env['PATH'] = 'C:\Windows\System32';
+        } else {
+            $env['PATH'] = '/usr/local/bin:/usr/bin:/bin';
+        }
+    }
+    // Valet/php-fpm often omit Homebrew from PATH; pg_dump lives under /opt/homebrew (ARM) or /usr/local (Intel).
+    if (PHP_OS_FAMILY === 'Darwin') {
+        $brew = '/opt/homebrew/bin:/usr/local/bin';
+        $p = isset($env['PATH']) && is_string($env['PATH']) ? $env['PATH'] : '';
+        $env['PATH'] = $p === '' ? $brew . ':/usr/bin:/bin' : $brew . ':' . $p;
+    }
+    $env['PGPASSWORD'] = $pgPassword;
+    $env['PGGSSENCMODE'] = 'disable';
+    $ssl = getenv('EXLIBRIS_PGSSLMODE');
+    if (is_string($ssl) && $ssl !== '') {
+        $env['PGSSLMODE'] = $ssl;
+    } else {
+        $pgssl = getenv('PGSSLMODE');
+        if (is_string($pgssl) && $pgssl !== '') {
+            $env['PGSSLMODE'] = $pgssl;
+        }
+    }
+
+    return $env;
+}
+
+/**
+ * Read proc_open stdout + stderr. Read stderr first: if we block on an empty
+ * stdout first, a chatty child can fill the stderr pipe and deadlock (e.g. pg_dump).
+ *
+ * @param resource $stdoutPipe
+ * @param resource $stderrPipe
+ * @return array{0: string, 1: string} stdout, stderr
+ */
+function exlibris_proc_read_pipes($stdoutPipe, $stderrPipe): array
+{
+    $stderr = is_resource($stderrPipe) ? (string) stream_get_contents($stderrPipe) : '';
+    if (is_resource($stderrPipe)) {
+        fclose($stderrPipe);
+    }
+    $stdout = is_resource($stdoutPipe) ? (string) stream_get_contents($stdoutPipe) : '';
+    if (is_resource($stdoutPipe)) {
+        fclose($stdoutPipe);
+    }
+
+    return [$stdout, $stderr];
+}
+
+/**
+ * Human-readable arg list for logs / errors (not for shell execution).
+ *
+ * @param list<string> $argv
+ */
+function exlibris_pg_argv_display(array $argv): string
+{
+    $out = [];
+    foreach ($argv as $a) {
+        $s = (string) $a;
+        $out[] = preg_match('/[\s\\\\\'"]/', $s) > 0 ? escapeshellarg($s) : $s;
+    }
+
+    return implode(' ', $out);
+}
+
+/**
+ * Extra context when pg_dump / psql / pg_restore fails (for API errors and app_log).
+ */
+function exlibris_pg_cli_troubleshoot(
+    string $binary,
+    int $exitCode,
+    string $stderr,
+    string $stdout,
+    string $argvDisplay,
+    string $host,
+    int $port,
+    string $user,
+    string $dbname,
+): string {
+    if ($exitCode < 0) {
+        $parts = [
+            sprintf('PHP could not start the process (proc_open failed). Binary was %s; target %s:%d, database %s, user %s.', $binary, $host, $port, $dbname, $user),
+            'Check that PHP allows proc_open (not in disable_functions), the path in EXLIBRIS_PG_DUMP is correct if the default pg_dump is not found, and the binary is executable.',
+        ];
+        $cmdLine = strlen($argvDisplay) > 500 ? substr($argvDisplay, 0, 500) . '…' : $argvDisplay;
+        $parts[] = 'Command line: `' . $cmdLine . '`.';
+        $early = implode(' ', $parts);
+
+        return strlen($early) > 4000 ? substr($early, 0, 4000) . '…' : $early;
+    }
+
+    $detail = trim($stderr) !== '' ? $stderr : $stdout;
+    $blob = strtolower($detail);
+
+    $parts = [
+        sprintf('Connecting as %s to %s:%d, database %s; pg_dump binary was %s.', $user, $host, $port, $dbname, $binary),
+    ];
+
+    if (trim($detail) === '') {
+        $parts[] = 'No stderr/stdout from pg_dump (rare; exit ' . (string) $exitCode . ').';
+    }
+
+    $hints = [];
+    if (trim($detail) === '' || str_contains($blob, 'command not found') || str_contains($blob, 'no such file or directory') || str_contains($blob, 'is not recognized')) {
+        $hints[] = 'Install client tools, or set EXLIBRIS_PG_DUMP to the full path to pg_dump (e.g. `which pg_dump` in a terminal).';
+    }
+    if (str_contains($blob, 'password authentication failed') || str_contains($blob, 'fe_sendauth')) {
+        $hints[] = 'Verify EXLIBRIS_DB_USER and EXLIBRIS_DB_PASS in .env match a PostgreSQL role.';
+    }
+    if (str_contains($blob, 'could not connect') || str_contains($blob, 'connection refused') || str_contains($blob, 'could not translate host name') || str_contains($blob, ' Name or service not known')) {
+        $hints[] = 'Confirm EXLIBRIS_DB_HOST / EXLIBRIS_DB_PORT, and that the server is running and allows this host (pg_hba.conf / firewall).';
+    }
+    if (str_contains($blob, 'pg_hba.conf') && str_contains($blob, 'no entry')) {
+        $hints[] = 'PostgreSQL pg_hba.conf may not allow this user/host combination.';
+    }
+    if (preg_match('/SSL|TLS|GSS|encryption|no pg_hba|certificate/i', $detail) > 0) {
+        $hints[] = 'If the server requires SSL, set EXLIBRIS_PGSSLMODE=require (or set PGSSLMODE) in your environment.';
+    }
+    if (str_contains($blob, 'role') && str_contains($blob, 'does not exist')) {
+        $hints[] = 'Create the DB role or set EXLIBRIS_DB_USER to an existing role.';
+    }
+    if (str_contains($blob, 'database') && str_contains($blob, 'does not exist')) {
+        $hints[] = 'Create the database or fix EXLIBRIS_DB_NAME.';
+    }
+
+    $hints = array_values(array_unique($hints));
+    if ($hints !== []) {
+        $parts[] = 'What to check: ' . implode(' ', array_map(
+            static fn (string $h, int $i): string => (string) ($i + 1) . ') ' . $h,
+            $hints,
+            array_keys($hints)
+        ));
+    }
+
+    $parts[] = 'Manual test: same env vars, run `' . (strlen($argvDisplay) > 500 ? substr($argvDisplay, 0, 500) . '…' : $argvDisplay) . '` (set PGPASSWORD in the shell; avoid pasting the password into logs).';
+
+    $out = implode(' ', $parts);
+    if (strlen($out) > 4000) {
+        $out = substr($out, 0, 4000) . '…';
+    }
+
+    return $out;
+}
+
 function h(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');

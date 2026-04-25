@@ -2063,6 +2063,12 @@
           try {
             const data = await response.json();
             msg = data.error || msg;
+            if (data.troubleshoot) {
+              const extra = String(data.troubleshoot).trim();
+              if (extra) {
+                msg = msg + " " + extra;
+              }
+            }
           } catch (_) {}
         } else {
           const text = await response.text();

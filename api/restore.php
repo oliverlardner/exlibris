@@ -18,21 +18,6 @@ function is_pg_custom_dump_file(string $path): bool
     return $sig === 'PGDMP';
 }
 
-/**
- * Best-effort exit code from proc_close() (Unix wait status vs Windows).
- */
-function proc_close_exit_code(int $status): int
-{
-    if (PHP_OS_FAMILY === 'Windows') {
-        return $status;
-    }
-    if (function_exists('pcntl_wifexited') && pcntl_wifexited($status)) {
-        return pcntl_wexitstatus($status);
-    }
-
-    return $status !== 0 ? 1 : 0;
-}
-
 ensure_defaults();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -110,12 +95,7 @@ if (!move_uploaded_file($tmpSrc, $dest)) {
     json_response(['error' => 'Could not store upload for restore.'], 500);
 }
 
-$env = getenv();
-if (!is_array($env)) {
-    $env = $_ENV;
-}
-$env['PGPASSWORD'] = (string) $db['pass'];
-$env['PGGSSENCMODE'] = 'disable';
+$env = exlibris_pg_proc_env((string) $db['pass']);
 
 set_time_limit(3600);
 
@@ -177,10 +157,7 @@ if (!is_resource($process)) {
 }
 
 fclose($pipes[0]);
-$stdout = stream_get_contents($pipes[1]);
-fclose($pipes[1]);
-$stderr = stream_get_contents($pipes[2]);
-fclose($pipes[2]);
+[$stdout, $stderr] = exlibris_proc_read_pipes($pipes[1], $pipes[2]);
 $rawStatus = proc_close($process);
 unlink($dest);
 

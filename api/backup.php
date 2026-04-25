@@ -51,34 +51,67 @@ if ($format === 'custom') {
     array_splice($cmd, -2, 0, ['-Fc']);
 }
 
-$env = getenv();
-if (!is_array($env)) {
-    $env = $_ENV;
-}
-$env['PGPASSWORD'] = (string) $db['pass'];
-$env['PGGSSENCMODE'] = 'disable';
+$env = exlibris_pg_proc_env((string) $db['pass']);
+$argvDisplay = exlibris_pg_argv_display($cmd);
 
 set_time_limit(600);
 
-$descriptorspec = [
-    0 => ['pipe', 'r'],
-    1 => ['pipe', 'w'],
-    2 => ['pipe', 'w'],
-];
-
-$process = proc_open($cmd, $descriptorspec, $pipes, null, $env);
+// On Unix, run via sh with 2>&1 so all pg_dump diagnostics land on one pipe.
+// Some PHP/Valet setups otherwise yield exit 1 with empty stderr/stdout (pipe handling).
+$useShellMerge = PHP_OS_FAMILY !== 'Windows';
+if ($useShellMerge) {
+    $descriptorspec = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+    ];
+    $shellLine = exlibris_pg_argv_display($cmd) . ' 2>&1';
+    $process = proc_open(['/bin/sh', '-c', $shellLine], $descriptorspec, $pipes, null, $env);
+} else {
+    $descriptorspec = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($cmd, $descriptorspec, $pipes, null, $env);
+}
 if (!is_resource($process)) {
-    json_response(['error' => 'Could not start pg_dump'], 500);
+    $ts = exlibris_pg_cli_troubleshoot(
+        $bin,
+        -1,
+        '',
+        '',
+        $argvDisplay,
+        (string) $db['host'],
+        (int) $db['port'],
+        (string) $db['user'],
+        (string) $db['name'],
+    );
+    app_log('backup_pg_dump_proc_open_failed', ['detail' => $ts]);
+    json_response(
+        [
+            'error' => 'Could not start pg_dump.',
+            'troubleshoot' => $ts,
+        ],
+        500
+    );
 }
 
 fclose($pipes[0]);
-$stdout = stream_get_contents($pipes[1]);
-fclose($pipes[1]);
-$stderr = stream_get_contents($pipes[2]);
-fclose($pipes[2]);
-proc_close($process);
+if ($useShellMerge) {
+    $merged = (string) stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stdout = '';
+    $stderr = $merged;
+} else {
+    [$stdout, $stderr] = exlibris_proc_read_pipes($pipes[1], $pipes[2]);
+}
+$rawStatus = proc_close($process);
+$exitCode = proc_close_exit_code($rawStatus);
 
 $okFile = is_file($outFile) && filesize($outFile) > 0;
+if ($exitCode !== 0) {
+    $okFile = false;
+}
 if (!$okFile) {
     if (is_file($outFile)) {
         unlink($outFile);
@@ -91,11 +124,35 @@ if (!$okFile) {
         $detail = substr($detail, 0, 2000) . '…';
     }
     $msg = 'pg_dump failed';
+    if ($exitCode !== 0) {
+        $msg .= ' (exit ' . (string) $exitCode . ')';
+    }
     if ($detail !== '') {
         $msg .= ': ' . $detail;
     }
-    app_log('backup_pg_dump_failed', []);
-    json_response(['error' => $msg], 500);
+    $troubleshoot = exlibris_pg_cli_troubleshoot(
+        $bin,
+        $exitCode,
+        (string) $stderr,
+        (string) $stdout,
+        $argvDisplay,
+        (string) $db['host'],
+        (int) $db['port'],
+        (string) $db['user'],
+        (string) $db['name'],
+    );
+    app_log('backup_pg_dump_failed', [
+        'exit' => $exitCode,
+        'detail' => $detail,
+        'troubleshoot' => $troubleshoot,
+    ]);
+    json_response(
+        [
+            'error' => $msg,
+            'troubleshoot' => $troubleshoot,
+        ],
+        500
+    );
 }
 
 $stamp = gmdate('Ymd-His');
