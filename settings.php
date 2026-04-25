@@ -4,6 +4,9 @@ declare(strict_types=1);
 require_once __DIR__ . '/lib/layout.php';
 require_once __DIR__ . '/lib/openai.php';
 
+$configDb = require __DIR__ . '/config.php';
+$dbName = (string) ($configDb['db']['name'] ?? 'exlibris');
+
 ensure_defaults();
 $themeMode = current_theme_mode();
 $includePages = include_pages_in_citations();
@@ -46,17 +49,44 @@ render_header('Settings');
     </article>
 
     <article class="card stack">
-        <h2>Database backup</h2>
+        <h2>Database backup & restore</h2>
         <p class="muted">
-            Downloads a PostgreSQL logical dump from the server via <code>pg_dump</code> (same connection settings as the app).
-            Requires the <code>pg_dump</code> client on the server <code>PATH</code>, or set <code>EXLIBRIS_PG_DUMP</code> to its full path.
-            <strong>SQL</strong> is plain text (<code>psql</code> / restore into an empty database). <strong>Custom</strong> is compressed binary — restore with <code>pg_restore</code>.
+            Uses the same PostgreSQL connection as the app (database <code><?= h($dbName) ?></code>).
+            Clients must be on the PHP process <code>PATH</code>, or set <code>EXLIBRIS_PG_DUMP</code>, <code>EXLIBRIS_PSQL</code>, and <code>EXLIBRIS_PG_RESTORE</code>.
+            Large restores may require raising <code>upload_max_filesize</code>, <code>post_max_size</code>, and execution time limits in PHP.
+        </p>
+        <h3 class="h3-settings">Backup</h3>
+        <p class="muted">
+            <strong>SQL</strong> is plain text. <strong>Custom</strong> is binary (<code>pg_restore</code>).
         </p>
         <div class="actions">
             <button type="button" class="btn btn-load" id="db-backup-sql-btn">Download SQL dump</button>
             <button type="button" class="btn btn-secondary" id="db-backup-custom-btn">Download custom (.dump)</button>
         </div>
         <p id="db-backup-status" class="muted" aria-live="polite"></p>
+
+        <h3 class="h3-settings">Restore</h3>
+        <p class="muted">
+            <strong class="text-danger">Destructive.</strong> Applies the uploaded file to this database.
+            Custom dumps use <code>pg_restore --clean --if-exists</code> (drops matching objects first).
+            Plain SQL runs with <code>ON_ERROR_STOP</code>; a non-empty database may hit “already exists” and stop partway — prefer custom backups for full replace, or restore into an empty database.
+        </p>
+        <label for="db-restore-format">Treat file as</label>
+        <select id="db-restore-format">
+            <option value="auto" selected>Auto-detect (PGDMP header ⇒ custom)</option>
+            <option value="sql">Plain SQL</option>
+            <option value="custom">Custom format</option>
+        </select>
+        <label for="db-restore-file">Dump file</label>
+        <input id="db-restore-file" type="file" accept=".sql,.dump,.backup,application/sql,application/octet-stream">
+        <label class="db-restore-ack-label">
+            <input type="checkbox" id="db-restore-ack" value="1">
+            I understand this will overwrite or drop data in <code><?= h($dbName) ?></code>.
+        </label>
+        <div class="actions">
+            <button type="button" class="btn btn-danger" id="db-restore-btn">Restore from file</button>
+        </div>
+        <p id="db-restore-status" class="muted db-restore-status" aria-live="polite"></p>
     </article>
 
     <article class="card stack">

@@ -446,6 +446,26 @@ textarea.drop-active {
   color: var(--delete);
 }
 
+.text-danger {
+  color: var(--delete);
+}
+
+.h3-settings {
+  margin: 0.85rem 0 0.25rem;
+  font-size: inherit;
+  font-weight: 400;
+}
+
+.db-restore-status {
+  white-space: pre-wrap;
+}
+
+.db-restore-ack-label {
+  display: flex;
+  gap: 0.45rem;
+  align-items: flex-start;
+}
+
 #theme-toggle::before,
 #theme-toggle::after {
   content: "";

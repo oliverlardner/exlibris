@@ -2096,6 +2096,69 @@
     }
   }
 
+  async function submitDbRestore() {
+    const fileEl = qs("#db-restore-file");
+    const ack = qs("#db-restore-ack");
+    const formatEl = qs("#db-restore-format");
+    const status = qs("#db-restore-status");
+    const file = fileEl?.files?.[0];
+    if (!file) {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = "Choose a dump file.";
+      }
+      return;
+    }
+    if (!ack?.checked) {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = "Confirm the checkbox to proceed.";
+      }
+      return;
+    }
+    const token = adminToken();
+    if (!token) {
+      if (status) {
+        status.classList.remove("error");
+        status.textContent =
+          "Admin token missing in this browser. Reload after EXLIBRIS_ADMIN_TOKEN is configured (see README).";
+      }
+      return;
+    }
+    const fd = new FormData();
+    fd.append("dump", file);
+    fd.append("acknowledge_danger", "1");
+    fd.append("format", formatEl?.value || "auto");
+    try {
+      if (status) {
+        status.classList.remove("error");
+        status.textContent = "Restoring…";
+      }
+      const response = await fetch(endpoint("/api/restore.php"), {
+        method: "POST",
+        headers: token ? { "X-Admin-Token": token } : {},
+        body: fd,
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {}
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed (${response.status})`);
+      }
+      if (status) {
+        const msg = data.message || "Restore finished.";
+        const log = data.log ? `\n\n${data.log}` : "";
+        status.textContent = msg + log;
+      }
+    } catch (e) {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = e.message || "Restore failed.";
+      }
+    }
+  }
+
   function wireSettingsPanels() {
     const backupSql = qs("#db-backup-sql-btn");
     if (backupSql) {
@@ -2104,6 +2167,11 @@
     const backupCustom = qs("#db-backup-custom-btn");
     if (backupCustom) {
       backupCustom.addEventListener("click", () => downloadDbBackup("custom"));
+    }
+
+    const restoreBtn = qs("#db-restore-btn");
+    if (restoreBtn) {
+      restoreBtn.addEventListener("click", () => submitDbRestore());
     }
 
     const keyForm = qs("#openai-key-form");

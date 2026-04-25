@@ -104,7 +104,7 @@ Input is detected automatically and routed through the appropriate pipeline, in 
 - Terminal-inspired visual style with action-button labels.
 - Dropdown controls use square corners and bordered style.
 - Low-confidence suggestions panel: when free-text input is ambiguous, up to 5 clickable Open Library candidates appear below the form.
-- **Settings → Database backup**: downloads a logical PostgreSQL dump produced by `pg_dump` on the server (SQL or custom format). Same auth as other write APIs (`X-Admin-Token`).
+- **Settings → Database backup & restore**: download a `pg_dump` (SQL or custom), or upload a dump to restore into the configured database (`psql` / `pg_restore --clean --if-exists`). Same auth as other write APIs (`X-Admin-Token`). Restore is destructive.
 
 ## Storage + Data Model
 
@@ -147,7 +147,10 @@ Runtime schema bootstrap occurs in `lib/db.php`.
 | `EXLIBRIS_DB_NAME` | Yes | `exlibris` | Database name |
 | `EXLIBRIS_DB_USER` | Yes | `postgres` | Database user |
 | `EXLIBRIS_DB_PASS` | Yes | *(empty)* | Blank works with `trust` auth |
-| `EXLIBRIS_PG_DUMP` | No | `pg_dump` | Full path to the `pg_dump` binary if it is not on the PHP process `PATH` (Settings backup). |
+| `EXLIBRIS_PG_DUMP` | No | `pg_dump` | Full path to `pg_dump` if not on the PHP `PATH` (Settings backup). |
+| `EXLIBRIS_PSQL` | No | `psql` | Full path to `psql` for plain-SQL restores. |
+| `EXLIBRIS_PG_RESTORE` | No | `pg_restore` | Full path to `pg_restore` for custom-format restores. |
+| `EXLIBRIS_RESTORE_MAX_BYTES` | No | `536870912` | Max uploaded dump size for restore (bytes). |
 | `EXLIBRIS_ADMIN_TOKEN` | Yes | *(none)* | Required — write APIs fail closed without it |
 | `EXLIBRIS_OPENAI_API_KEY` | No | *(settings DB)* | Env takes priority over Settings UI |
 | `EXLIBRIS_OPENAI_CHAT_MODEL` | No | `gpt-4o-mini` | Chat model for extraction + assistant |
@@ -160,7 +163,7 @@ Runtime schema bootstrap occurs in `lib/db.php`.
 
 - Mutating APIs require `X-Admin-Token: <value>` header matching `EXLIBRIS_ADMIN_TOKEN`.
 - Write/compute POST APIs fail closed if the token is not configured.
-- `api/backup.php` (POST) uses the same token and returns a **full database dump**; anyone with the token can exfiltrate all bibliography data. Ensure the token stays secret. The PHP process must be allowed to run `proc_open` / `pg_dump` (some hosts disable these).
+- `api/backup.php` (POST) uses the same token and returns a **full database dump**; `api/restore.php` (multipart POST) can **overwrite or drop** objects in the configured database from an uploaded file. Anyone with the token can exfiltrate or destroy data. Keep the token secret. The PHP process must allow `proc_open` and file uploads within `upload_max_filesize` / `post_max_size` (some hosts disable these).
 - OpenAI key is env-first; settings-based key fallback is still supported.
 - Reader runs that enable hosted web search are slower and costlier than local-only assistant actions; expect roughly 20-60s end-to-end for multi-source synthesis.
 - `.env` values are only loaded if the environment variable is not already set — OS/server env always wins.
