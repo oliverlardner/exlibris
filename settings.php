@@ -46,6 +46,20 @@ render_header('Settings');
     </article>
 
     <article class="card stack">
+        <h2>Database backup</h2>
+        <p class="muted">
+            Downloads a PostgreSQL logical dump from the server via <code>pg_dump</code> (same connection settings as the app).
+            Requires the <code>pg_dump</code> client on the server <code>PATH</code>, or set <code>EXLIBRIS_PG_DUMP</code> to its full path.
+            <strong>SQL</strong> is plain text (<code>psql</code> / restore into an empty database). <strong>Custom</strong> is compressed binary — restore with <code>pg_restore</code>.
+        </p>
+        <div class="actions">
+            <button type="button" class="btn btn-load" id="db-backup-sql-btn">Download SQL dump</button>
+            <button type="button" class="btn btn-secondary" id="db-backup-custom-btn">Download custom (.dump)</button>
+        </div>
+        <p id="db-backup-status" class="muted" aria-live="polite"></p>
+    </article>
+
+    <article class="card stack">
         <h2>OpenAI API Key</h2>
         <p class="muted">Key is tested when you save. Errors show below immediately.</p>
         <?php if ($openAiManagedByEnv): ?>

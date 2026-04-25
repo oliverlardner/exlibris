@@ -2035,7 +2035,77 @@
     addList("Limitations", ann.limitations);
   }
 
+  async function downloadDbBackup(format) {
+    const status = qs("#db-backup-status");
+    const token = adminToken();
+    if (!token) {
+      if (status) {
+        status.classList.remove("error");
+        status.textContent =
+          "Admin token missing in this browser. Reload after EXLIBRIS_ADMIN_TOKEN is configured (see README).";
+      }
+      return;
+    }
+    try {
+      if (status) {
+        status.classList.remove("error");
+        status.textContent = "Running pg_dump…";
+      }
+      const response = await fetch(endpoint("/api/backup.php"), {
+        method: "POST",
+        headers: headersWithAuth(),
+        body: JSON.stringify({ format }),
+      });
+      const ctype = response.headers.get("Content-Type") || "";
+      if (!response.ok) {
+        let msg = `Request failed (${response.status})`;
+        if (ctype.includes("application/json")) {
+          try {
+            const data = await response.json();
+            msg = data.error || msg;
+          } catch (_) {}
+        } else {
+          const text = await response.text();
+          if (text) msg = text.slice(0, 500);
+        }
+        throw new Error(msg);
+      }
+      if (ctype.includes("application/json")) {
+        throw new Error("Unexpected JSON response");
+      }
+      const blob = await response.blob();
+      const dispo = response.headers.get("Content-Disposition") || "";
+      const match = /filename="([^"]+)"/.exec(dispo);
+      const name = match
+        ? match[1]
+        : format === "custom"
+          ? "exlibris.dump"
+          : "exlibris.sql";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+      if (status) status.textContent = "Download started.";
+    } catch (e) {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = e.message || "Backup failed.";
+      }
+    }
+  }
+
   function wireSettingsPanels() {
+    const backupSql = qs("#db-backup-sql-btn");
+    if (backupSql) {
+      backupSql.addEventListener("click", () => downloadDbBackup("sql"));
+    }
+    const backupCustom = qs("#db-backup-custom-btn");
+    if (backupCustom) {
+      backupCustom.addEventListener("click", () => downloadDbBackup("custom"));
+    }
+
     const keyForm = qs("#openai-key-form");
     if (keyForm) {
       keyForm.addEventListener("submit", async (event) => {
