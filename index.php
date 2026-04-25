@@ -23,19 +23,25 @@ foreach ($rows as $row) {
         $cache = [];
     }
     $citation = (string) ($cache[$format] ?? format_citation($source, $format));
-    $search = implode(' ', [
+    $entryProjects = $projectMap[(int) ($source['id'] ?? 0)] ?? [];
+    $projectLabels = array_values(array_filter(array_map(
+        static fn (array $project): string => trim((string) ($project['name'] ?? '')),
+        $entryProjects
+    )));
+    $search = implode(' ', array_filter([
         $source['title'],
         implode(', ', $source['authors']),
         $source['doi'],
         $source['isbn'],
         $source['notes'],
-    ]);
+        implode(' ', $projectLabels),
+    ]));
 
     $entries[] = [
         'source' => $source,
         'citation' => $citation,
         'search' => $search,
-        'projects' => $projectMap[(int) ($source['id'] ?? 0)] ?? [],
+        'projects' => $entryProjects,
         'note_count' => (int) ($noteCountMap[(int) ($source['id'] ?? 0)] ?? 0),
     ];
 }
@@ -61,7 +67,7 @@ render_header('Bibliography');
 
     <div class="card">
         <label for="search-input">Search</label>
-        <input id="search-input" placeholder="Search title, author, DOI, notes...">
+        <input id="search-input" placeholder="Search title, author, DOI, notes, collections…">
         <label for="collection-filter">Filter by collection</label>
         <select id="collection-filter">
             <option value="">All collections</option>
@@ -175,7 +181,16 @@ render_header('Bibliography');
                     <?php if ($source['doi'] !== ''): ?><span>DOI: <?= h($source['doi']) ?></span><?php endif; ?>
                     <?php if (($source['origin_provider'] ?? '') === 'zotero'): ?><span class="badge-zotero">Zotero</span><?php endif; ?>
                     <?php foreach ($projects as $project): ?>
-                        <span class="badge-collection"><?= h((string) ($project['name'] ?? '')) ?></span>
+                        <?php $pid = (int) ($project['id'] ?? 0); ?>
+                        <?php if ($pid > 0): ?>
+                            <a
+                                class="badge-collection"
+                                href="/index.php?collection=<?= $pid ?>"
+                                title="Bibliography: sources in this collection"
+                            ><?= h((string) ($project['name'] ?? '')) ?></a>
+                        <?php else: ?>
+                            <span class="badge-collection"><?= h((string) ($project['name'] ?? '')) ?></span>
+                        <?php endif; ?>
                     <?php endforeach; ?>
                 </div>
                 <div class="actions">

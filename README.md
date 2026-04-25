@@ -10,8 +10,10 @@ It supports mixed-source ingestion, citation formatting, semantic retrieval, sou
 - Add sources from `dump.php` — accepts any of the input formats listed below.
 - Review/edit source metadata before saving.
 - Manage saved entries on `index.php` (search, load, cite copy, visit link, delete).
-- Assign sources to collections (tag-style, comma-separated, autocomplete from existing names).
+- Assign sources to collections (tag-style) with chip/token inputs and datalist suggestions on `dump.php` (Add), `source.php` (edit), and `view.php` (read-only card with save).
 - New collection names are created on save and attached to the source immediately.
+- Home (`index.php`): search matches collection names; **Filter by collection** narrows the grid; each collection badge links to the same filtered bibliography (`?collection=<id>`).
+- View page saves collections via `api/source_collections.php` (JSON POST: `id`, `project_names` array) without editing the full record.
 - View/edit single source details on `source.php`.
 - Export formatted citations via `api/export.php`.
 
@@ -42,7 +44,7 @@ Input is detected automatically and routed through the appropriate pipeline, in 
 
 **Free-text enrichment chain** (for raw titles, author names, rough notes, misspellings):
 1. OpenAI identifies the work and corrects spelling.
-2. If an ISBN is returned, Open Library confirms it; if the ISBN lookup misses, falls through to title search.
+2. If an ISBN is returned, Open Library confirms it; the ISBN is **rejected** when the catalog title (and author signal) does not match the extracted work, so the model cannot “lock in” the wrong edition. If the ISBN lookup misses, processing falls through to title search.
 3. Open Library title search tries `"quoted title" author` → unquoted → author-only fallback.
 4. If confidence is still low (no canonical identifier, or the extracted title doesn't match the input), up to 5 candidate works from Open Library are returned as selectable suggestions in the UI.
 
@@ -64,7 +66,8 @@ Input is detected automatically and routed through the appropriate pipeline, in 
 - Semantic search endpoint (`api/semantic.php`) and UI panel on `index.php`.
 - Assistant endpoint (`api/assistant.php`) includes:
   - Source quality scoring
-  - Smart annotation copilot (summary, claims, methods, limitations)
+  - **AI reading guide** on `source.php`: generates or refreshes an in-page reading guide (summary, key claims, methods, limitations); copilot actions sit above the guide; the guide body and meta lists update in place after **Reading guide** without a full reload; highlights support margin notes stored as `reading_guide` notes
+  - Other copilots on the source page: Quality, Citation QA, Similar (output in the assistant panel)
   - Theme clustering
   - Similar source retrieval
   - Claim-to-source linking (draft matching)
@@ -95,6 +98,8 @@ Input is detected automatically and routed through the appropriate pipeline, in 
 ### UI/UX
 
 - Theme toggle (auto/light/dark).
+- Primary nav shows **Home**, **Add**, and a **`[ more... ]`** menu (Cleanup, Digest, Styles, Settings).
+- **Floating Save changes**: when a form with unsaved edits is marked for it (`data-floating-save`), a fixed **Save changes** control appears; **⌘S** / **Ctrl+S** submits that form. Used on source edit, Add (dump), view collections, and OpenAI key settings. The button uses a filled green style so it stays obvious.
 - Full-screen drag-and-drop for `.bib`, `.ris`, `.txt`, and dropped links.
 - Terminal-inspired visual style with action-button labels.
 - Dropdown controls use square corners and bordered style.
@@ -107,6 +112,7 @@ Primary storage is PostgreSQL.
 - Core tables: `sources`, `settings`, `projects`, `source_project`
 - Assistant/semantic tables: `source_embeddings`, `assistant_runs`, `draft_claim_links`, `digest_runs`
 - Optional markdown mirrors: `data/sources-md/source-<id>.md`
+- `lib/viewer_markdown_plain.php` mirrors the browser viewer’s markdown → plain-text normalization so server-side helpers and selection offsets stay consistent with `assets/app.js`.
 
 Schema reference: `sql/schema.sql`  
 Runtime schema bootstrap occurs in `lib/db.php`.

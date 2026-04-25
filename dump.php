@@ -23,7 +23,7 @@ render_header('Add Source');
         </div>
     </div>
 
-    <form id="source-form" class="card hidden">
+    <form id="source-form" class="card hidden" data-floating-save>
         <h2>Review and Edit</h2>
         <div class="grid">
             <label>Type <input name="type" value="other"></label>
@@ -39,7 +39,21 @@ render_header('Add Source');
             <label>ISBN <input name="isbn"></label>
             <label>URL <input name="url"></label>
             <label>Accessed At <input name="accessed_at" placeholder="2026-04-13T06:50:00+00:00"></label>
-            <label>Collections (comma-separated) <input name="project_names" list="project-name-options" placeholder="e.g. Thesis, VR, Theory"></label>
+            <label class="stack project-token-grid-span">Collections
+                <div class="project-token-field">
+                    <div class="project-token-box header-projects-editor" role="group" aria-label="Collections">
+                        <div class="project-token-chips header-project-chips"></div>
+                        <input
+                            type="text"
+                            class="project-token-input"
+                            list="project-name-options"
+                            placeholder="Type — suggestions or new tags. Enter / comma to add."
+                            autocomplete="off"
+                        >
+                    </div>
+                    <input type="hidden" class="project-token-hidden" name="project_names" value="">
+                </div>
+            </label>
         </div>
         <label>Notes <textarea name="notes" rows="4"></textarea></label>
         <input type="hidden" name="raw_input">

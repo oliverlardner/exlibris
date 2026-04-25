@@ -362,7 +362,7 @@ try {
             'status' => is_array($result) ? 'success' : 'no_result',
             'detail' => is_array($result) ? 'AI extracted/identified metadata from input.' : 'AI returned no result.',
         ];
-        $result = enrich_with_openlibrary($result, $lookupTrace);
+        $result = enrich_with_openlibrary($result, $lookupTrace, true);
 
         // When confidence is low (no ISBN/DOI, missing title or year, or title
         // doesn't match the input at all), generate a list of OL candidates.
@@ -1010,12 +1010,126 @@ function generate_suggestions(string $rawInput, ?array $aiResult): array
 // ── Open Library enrichment ───────────────────────────────────────────────────
 
 /**
+ * Words of length >= 4 used to compare titles (avoids weak single-token hits like "war").
+ *
+ * @return string[]
+ */
+function title_significant_words_for_verify(string $text): array
+{
+    $words = preg_split('/\W+/u', mb_strtolower(trim($text))) ?: [];
+    $out = [];
+    foreach ($words as $w) {
+        if (strlen($w) >= 4) {
+            $out[$w] = true;
+        }
+    }
+
+    return array_keys($out);
+}
+
+/**
+ * Whether extracted and Open Library titles plausibly refer to the same work.
+ */
+function titles_consistent_for_isbn_verify(string $extractedTitle, string $olTitle, bool $authorsMatch): bool
+{
+    $a = mb_strtolower(trim($extractedTitle));
+    $b = mb_strtolower(trim($olTitle));
+    if ($a === '' || $b === '') {
+        return true;
+    }
+    if ($a === $b) {
+        return true;
+    }
+    if (str_contains($b, $a) || str_contains($a, $b)) {
+        return true;
+    }
+
+    $wa = title_significant_words_for_verify($extractedTitle);
+    $wb = title_significant_words_for_verify($olTitle);
+    $inter = array_intersect($wa, $wb);
+    $n = count($inter);
+    if ($n >= 2) {
+        return true;
+    }
+    if ($n === 1 && (count($wa) === 1 || count($wb) === 1 || $authorsMatch)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * @param string[] $extAuthors
+ * @param string[] $olAuthors
+ */
+function authors_consistent_for_isbn_verify(array $extAuthors, array $olAuthors): bool
+{
+    if ($extAuthors === [] || $olAuthors === []) {
+        return true;
+    }
+
+    $tokens = [];
+    foreach ($extAuthors as $name) {
+        foreach (preg_split('/\W+/u', mb_strtolower(trim($name))) ?: [] as $p) {
+            if (strlen($p) > 2) {
+                $tokens[$p] = true;
+            }
+        }
+    }
+    if ($tokens === []) {
+        return true;
+    }
+
+    $olBlob = mb_strtolower(implode(' ', $olAuthors));
+    foreach (array_keys($tokens) as $t) {
+        if (str_contains($olBlob, $t)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Reject Open Library ISBN enrichment when the record clearly disagrees with
+ * the model's extracted title/authors (hallucinated ISBN on free text).
+ *
+ * @param array<string, mixed> $olResult
+ * @param array<string, mixed> $aiExtracted
+ */
+function openlibrary_isbn_matches_ai_extraction(array $olResult, array $aiExtracted): bool
+{
+    $tAi = trim((string) ($aiExtracted['title'] ?? ''));
+    $aAi = array_values(array_filter(array_map('trim', (array) ($aiExtracted['authors'] ?? []))));
+    if ($tAi === '' && $aAi === []) {
+        return false;
+    }
+
+    $tOl = trim((string) ($olResult['title'] ?? ''));
+    $aOl = array_values(array_filter(array_map('trim', (array) ($olResult['authors'] ?? []))));
+    $authOk = authors_consistent_for_isbn_verify($aAi, $aOl);
+
+    if ($tAi !== '' && $tOl !== '' && !titles_consistent_for_isbn_verify($tAi, $tOl, $authOk)) {
+        return false;
+    }
+    if ($aAi !== [] && $aOl !== []) {
+        return $authOk;
+    }
+
+    return true;
+}
+
+/**
  * After AI extraction, attempt to enrich the result with authoritative Open
  * Library data.  If the AI produced an ISBN we do a direct lookup; otherwise
  * we try a title/author search.  Only runs for book-like types to avoid false
  * matches on articles, videos, etc.
+ *
+ * @param bool $verifyIsbnAgainstExtraction When true (free-text path), refuse
+ *        ISBN enrichment if the Open Library record disagrees with the
+ *        extracted title/authors — avoids wrong books from hallucinated ISBNs.
  */
-function enrich_with_openlibrary(?array $result, array &$trace): ?array
+function enrich_with_openlibrary(?array $result, array &$trace, bool $verifyIsbnAgainstExtraction = false): ?array
 {
     if (!is_array($result)) {
         return $result;
@@ -1023,15 +1137,30 @@ function enrich_with_openlibrary(?array $result, array &$trace): ?array
 
     $isbn = trim((string) ($result['isbn'] ?? ''));
     if ($isbn !== '') {
+        $isbnLookupFailed = false;
         try {
             $olResult = lookup_isbn_openlibrary($isbn);
             if (is_array($olResult)) {
-                $trace[] = ['step' => 'openlibrary_isbn', 'status' => 'success', 'detail' => 'Open Library enriched metadata via ISBN.'];
-                return merge_source_candidates($olResult, $result, (string) ($result['url'] ?? ''));
+                if ($verifyIsbnAgainstExtraction && !openlibrary_isbn_matches_ai_extraction($olResult, $result)) {
+                    $trace[] = [
+                        'step' => 'openlibrary_isbn',
+                        'status' => 'rejected',
+                        'detail' => 'Open Library record for the model-supplied ISBN did not match the extracted title or authors; trying title search instead.',
+                    ];
+                    $result['isbn'] = '';
+                } else {
+                    $trace[] = ['step' => 'openlibrary_isbn', 'status' => 'success', 'detail' => 'Open Library enriched metadata via ISBN.'];
+                    return merge_source_candidates($olResult, $result, (string) ($result['url'] ?? ''));
+                }
+            } else {
+                $isbnLookupFailed = true;
             }
-        } catch (Throwable) {}
-        // ISBN miss — fall through to title search rather than giving up
-        $trace[] = ['step' => 'openlibrary_isbn', 'status' => 'no_result', 'detail' => 'Open Library had no result for ISBN; trying title search.'];
+        } catch (Throwable) {
+            $isbnLookupFailed = true;
+        }
+        if ($isbnLookupFailed && trim((string) ($result['isbn'] ?? '')) !== '') {
+            $trace[] = ['step' => 'openlibrary_isbn', 'status' => 'no_result', 'detail' => 'Open Library had no result for ISBN; trying title search.'];
+        }
     }
 
     $type = strtolower(trim((string) ($result['type'] ?? '')));

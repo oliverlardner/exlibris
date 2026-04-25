@@ -51,7 +51,7 @@ render_header('Settings');
         <?php if ($openAiManagedByEnv): ?>
             <p class="muted">OpenAI key is currently managed by `EXLIBRIS_OPENAI_API_KEY` environment variable.</p>
         <?php endif; ?>
-        <form id="openai-key-form" class="stack">
+        <form id="openai-key-form" class="stack" data-floating-save>
             <label for="openai_api_key">API key</label>
             <input
                 id="openai_api_key"

@@ -213,7 +213,8 @@ function openai_extract_source(string $input, ?string $url = null): ?array
             'content' => 'You are a bibliographic metadata assistant. Given the input, extract or identify the metadata and return only valid JSON. ' .
                 'Schema keys: type (book/article/video/website/other), title, authors, year, publisher, journal, volume, issue, pages, doi, isbn, url, notes. ' .
                 'authors must be an array of strings. ' .
-                'For a book or article title: identify the work and fill in all metadata you know with confidence, including isbn (prefer ISBN-13) or doi if known. ' .
+                'Identify the work from the input text. Fill title, authors, year, and publisher when you can do so reliably. ' .
+                'For isbn and doi: use ONLY values that appear literally in the input (or in pasted citation metadata). Do not invent or recall identifiers from memory. ' .
                 'Use empty string for unknown scalar values.',
         ],
         [

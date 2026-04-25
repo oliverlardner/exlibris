@@ -37,6 +37,14 @@ if (!is_array($cache)) {
 }
 $citation = (string) ($cache[$format] ?? format_citation($source, $format));
 
+$aiSummary = trim((string) ($source['ai_summary'] ?? ''));
+$aiSummaryRaw = (string) ($source['ai_summary'] ?? '');
+$readingGuideNotes = list_source_notes($id, 'reading_guide');
+$jsonScriptFlags = JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT;
+$aiClaims = is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [];
+$aiMethods = is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [];
+$aiLimits = is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [];
+
 render_header('Source');
 ?>
 <section class="stack">
@@ -50,10 +58,29 @@ render_header('Source');
         <?php render_citation_with_copy($citation); ?>
         <div class="meta">
             <?php if (($source['origin_provider'] ?? '') === 'zotero'): ?><span class="badge-zotero">Zotero Imported</span><?php endif; ?>
-            <?php foreach ($projects as $project): ?>
-                <span class="badge-collection"><?= h((string) ($project['name'] ?? '')) ?></span>
-            <?php endforeach; ?>
         </div>
+        <label class="stack">
+            <span>Collections</span>
+            <div class="project-token-field">
+                <div class="project-token-box header-projects-editor" role="group" aria-label="Collections">
+                    <div class="project-token-chips header-project-chips"></div>
+                    <input
+                        type="text"
+                        class="project-token-input"
+                        list="project-name-options"
+                        placeholder="Type — match suggestions or add a new tag. Enter or comma to add."
+                        autocomplete="off"
+                    >
+                </div>
+                <input
+                    type="hidden"
+                    class="project-token-hidden"
+                    name="project_names"
+                    form="source-form"
+                    value="<?= h(implode(', ', $projectNames)) ?>"
+                >
+            </div>
+        </label>
         <div class="actions">
             <?php $safeUrl = safe_external_url((string) ($source['url'] ?? '')); ?>
             <?php if ($safeUrl !== ''): ?>
@@ -128,19 +155,23 @@ render_header('Source');
             <?php endif; ?>
             <?php endif; ?>
         </article>
-    <?php
-    $aiSummary = trim((string) ($source['ai_summary'] ?? ''));
-    $aiClaims = is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [];
-    $aiMethods = is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [];
-    $aiLimits = is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [];
-    $hasAiCard = $aiSummary !== '' || $aiClaims !== [] || $aiMethods !== [] || $aiLimits !== [];
-    ?>
-    <?php if ($hasAiCard): ?>
-        <article class="card stack source-ai-annotation">
-            <h2>AI reading guide <span class="muted">(saved on this source)</span></h2>
-            <?php if ($aiSummary !== ''): ?>
-                <div class="ai-reading-guide"><?php render_ai_reading_summary($aiSummary); ?></div>
-            <?php endif; ?>
+    <article class="card stack source-ai-annotation">
+        <h2>AI reading guide</h2>
+        <p id="reading-guide-empty-hint" class="muted <?= $aiSummary !== '' ? 'hidden' : '' ?>">
+            No guide yet — click <strong>Reading guide</strong> to generate from this source.
+        </p>
+        <p id="reading-guide-active-hint" class="muted <?= $aiSummary === '' ? 'hidden' : '' ?>">
+            Highlight in the guide to add margin notes (separate from
+            <a href="/view.php?id=<?= (int) $source['id'] ?>">notes on extracted text</a>).
+        </p>
+        <div class="actions">
+            <button type="button" class="btn btn-load" id="assistant-annotate-btn" data-source-id="<?= (int) $source['id'] ?>">Reading guide</button>
+            <button type="button" class="btn btn-copy" id="assistant-quality-btn" data-source-id="<?= (int) $source['id'] ?>">Quality</button>
+            <button type="button" class="btn btn-copy" id="assistant-citation-qa-btn" data-source-id="<?= (int) $source['id'] ?>">Citation QA</button>
+            <button type="button" class="btn btn-copy" id="assistant-similar-btn" data-source-id="<?= (int) $source['id'] ?>">Similar</button>
+        </div>
+        <div id="assistant-source-output" class="assistant-source-output stack" aria-live="polite"></div>
+        <div id="reading-guide-meta-lists" class="stack">
             <?php if ($aiClaims !== []): ?>
                 <p><strong>Key claims</strong></p>
                 <ul>
@@ -165,8 +196,44 @@ render_header('Source');
                     <?php endforeach; ?>
                 </ul>
             <?php endif; ?>
-        </article>
-    <?php endif; ?>
+        </div>
+        <div class="viewer-layout reading-guide-viewer">
+            <article class="card stack viewer-main reading-guide-viewer-main">
+                <div class="row viewer-toolbar">
+                    <h3>Guide</h3>
+                    <div class="actions viewer-controls">
+                        <p class="muted">Notes: <span id="reading-guide-note-count"><?= h((string) count($readingGuideNotes)) ?></span></p>
+                    </div>
+                </div>
+                <div id="reading-guide-reading-stage" class="viewer-reading-stage">
+                    <div
+                        id="reading-guide-text-panel"
+                        class="viewer-text-panel reading-guide-text-panel"
+                        aria-label="AI reading guide"
+                    ></div>
+                    <div id="reading-guide-annotations-rail" class="viewer-annotations-rail" aria-label="Reading guide notes">
+                        <div id="reading-guide-notes-layer" class="viewer-notes-layer"></div>
+                        <article id="reading-guide-selection-card" class="viewer-selection-card hidden">
+                            <h3>New note on guide</h3>
+                            <label>Selected passage
+                                <textarea id="reading-guide-selected-quote" rows="4" readonly></textarea>
+                            </label>
+                            <label>Note
+                                <textarea id="reading-guide-note-text" rows="5" placeholder="Why this part matters to you..."></textarea>
+                            </label>
+                            <label>Tags (comma-separated)
+                                <input id="reading-guide-note-tags" placeholder="theme, follow-up, critique">
+                            </label>
+                            <div class="actions">
+                                <button type="button" class="btn btn-load" id="reading-guide-note-save">Save note</button>
+                                <button type="button" class="btn btn-secondary" id="reading-guide-note-clear">Clear selection</button>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+            </article>
+        </div>
+    </article>
     <?php if ($pdfPath !== ''): ?>
         <article class="card stack">
             <h2>PDF</h2>
@@ -217,7 +284,7 @@ render_header('Source');
         </article>
     <?php endif; ?>
 
-    <form id="source-form" class="card">
+    <form id="source-form" class="card" data-floating-save>
         <h2>Edit Source</h2>
         <div class="grid">
             <label>Type <input name="type" value="<?= h($source['type']) ?>"></label>
@@ -235,7 +302,6 @@ render_header('Source');
             <label>ISBN <input name="isbn" value="<?= h($source['isbn']) ?>"></label>
             <label>URL <input name="url" value="<?= h($source['url']) ?>"></label>
             <label>Accessed At <input name="accessed_at" value="<?= h($source['accessed_at'] ?? '') ?>"></label>
-            <label>Collections (comma-separated) <input name="project_names" list="project-name-options" value="<?= h(implode(', ', $projectNames)) ?>"></label>
         </div>
         <label>Notes <textarea name="notes" rows="4"><?= h($source['notes']) ?></textarea></label>
         <label>Extracted Text
@@ -261,19 +327,13 @@ render_header('Source');
             <?php endif; ?>
         </article>
     <?php endif; ?>
-    <article class="card stack">
-        <h2>Assistant Copilot</h2>
-        <p class="muted">Run a substantive AI reading guide, source-quality scoring, citation QA, and similar-source lookup.</p>
-        <div class="actions">
-            <button type="button" class="btn btn-load" id="assistant-annotate-btn" data-source-id="<?= (int) $source['id'] ?>">Reading guide</button>
-            <button type="button" class="btn btn-copy" id="assistant-quality-btn" data-source-id="<?= (int) $source['id'] ?>">Quality</button>
-            <button type="button" class="btn btn-copy" id="assistant-citation-qa-btn" data-source-id="<?= (int) $source['id'] ?>">Citation QA</button>
-            <button type="button" class="btn btn-copy" id="assistant-similar-btn" data-source-id="<?= (int) $source['id'] ?>">Similar</button>
-        </div>
-        <div id="assistant-source-output" class="assistant-source-output stack" aria-live="polite"></div>
-    </article>
     <p id="app-status" class="muted"></p>
 </section>
+<script id="reading-guide-viewer-data" type="application/json"><?= json_encode([
+    'id' => (int) ($source['id'] ?? 0),
+    'reading_text' => $aiSummaryRaw,
+], $jsonScriptFlags) ?></script>
+<script id="reading-guide-notes-data" type="application/json"><?= json_encode($readingGuideNotes, $jsonScriptFlags) ?></script>
 <datalist id="project-name-options">
     <?php foreach ($allProjects as $project): ?>
         <option value="<?= h((string) ($project['name'] ?? '')) ?>"></option>

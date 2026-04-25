@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/viewer_markdown_plain.php';
+
 function db(): PDO
 {
     static $pdo = null;
@@ -170,6 +172,7 @@ function ensure_schema(PDO $pdo): void
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )'
     );
+    $pdo->exec('ALTER TABLE source_notes ADD COLUMN IF NOT EXISTS note_scope TEXT NOT NULL DEFAULT \'body\'');
 
     $ready = true;
 }
@@ -470,6 +473,7 @@ function source_note_counts_for_source_ids(array $sourceIds): array
     $sql = 'SELECT source_id, COUNT(*) AS note_count
             FROM source_notes
             WHERE source_id IN (' . implode(', ', $holders) . ')
+              AND note_scope = \'body\'
             GROUP BY source_id';
     $stmt = db()->prepare($sql);
     $stmt->execute($params);
@@ -715,16 +719,22 @@ function source_note_to_array(array $row): array
         'project_ids' => array_values(array_filter(array_map('intval', $decodeArray($row['project_ids'] ?? [])), static fn (int $id): bool => $id > 0)),
         'created_at' => (string) ($row['created_at'] ?? ''),
         'updated_at' => (string) ($row['updated_at'] ?? ''),
+        'note_scope' => in_array((string) ($row['note_scope'] ?? 'body'), ['body', 'reading_guide'], true)
+            ? (string) ($row['note_scope'] ?? 'body')
+            : 'body',
     ];
 }
 
-function list_source_notes(int $sourceId): array
+function list_source_notes(int $sourceId, string $noteScope = 'body'): array
 {
     if ($sourceId <= 0) {
         return [];
     }
-    $stmt = db()->prepare('SELECT * FROM source_notes WHERE source_id = :source_id ORDER BY start_offset ASC, id ASC');
-    $stmt->execute(['source_id' => $sourceId]);
+    $scope = in_array($noteScope, ['body', 'reading_guide'], true) ? $noteScope : 'body';
+    $stmt = db()->prepare(
+        'SELECT * FROM source_notes WHERE source_id = :source_id AND note_scope = :note_scope ORDER BY start_offset ASC, id ASC'
+    );
+    $stmt->execute(['source_id' => $sourceId, 'note_scope' => $scope]);
     $rows = $stmt->fetchAll() ?: [];
 
     return array_values(array_map(static fn (array $row): array => source_note_to_array($row), $rows));
@@ -752,9 +762,28 @@ function create_source_note(array $note): array
     if (!is_array($source)) {
         throw new RuntimeException('Source not found.');
     }
+    $noteScope = trim((string) ($note['note_scope'] ?? 'body'));
+    if ($noteScope === '') {
+        $noteScope = 'body';
+    }
+    if (!in_array($noteScope, ['body', 'reading_guide'], true)) {
+        throw new RuntimeException('Invalid note scope.');
+    }
+
     $bodyText = (string) ($source['body_text'] ?? '');
-    if ($bodyText === '') {
-        throw new RuntimeException('Source has no extracted text to annotate.');
+    $aiSummaryRaw = (string) ($source['ai_summary'] ?? '');
+    $aiSummaryTrim = trim($aiSummaryRaw);
+    $documentText = '';
+    if ($noteScope === 'body') {
+        if ($bodyText === '') {
+            throw new RuntimeException('Source has no extracted text to annotate.');
+        }
+        $documentText = $bodyText;
+    } else {
+        if ($aiSummaryTrim === '') {
+            throw new RuntimeException('No AI reading guide text to annotate.');
+        }
+        $documentText = viewer_markdown_plain_text($aiSummaryRaw);
     }
 
     $startOffset = max(0, (int) ($note['start_offset'] ?? 0));
@@ -762,9 +791,9 @@ function create_source_note(array $note): array
     if ($endOffset <= $startOffset) {
         throw new RuntimeException('Annotation range is invalid.');
     }
-    $bodyLength = mb_strlen($bodyText);
+    $bodyLength = mb_strlen($documentText);
     if ($endOffset > $bodyLength) {
-        throw new RuntimeException('Annotation range exceeds source text length.');
+        throw new RuntimeException('Annotation range exceeds document text length.');
     }
 
     $projectIds = $note['project_ids'] ?? [];
@@ -781,14 +810,14 @@ function create_source_note(array $note): array
 
     $quoteText = trim((string) ($note['quote_text'] ?? ''));
     if ($quoteText === '') {
-        $quoteText = mb_substr($bodyText, $startOffset, $endOffset - $startOffset);
+        $quoteText = mb_substr($documentText, $startOffset, $endOffset - $startOffset);
     }
     $noteText = trim((string) ($note['note_text'] ?? ''));
     if ($quoteText === '' || $noteText === '') {
         throw new RuntimeException('Both highlighted text and note text are required.');
     }
 
-    foreach (list_source_notes($sourceId) as $existing) {
+    foreach (list_source_notes($sourceId, $noteScope) as $existing) {
         $existingStart = (int) ($existing['start_offset'] ?? 0);
         $existingEnd = (int) ($existing['end_offset'] ?? 0);
         if ($startOffset < $existingEnd && $endOffset > $existingStart) {
@@ -799,13 +828,14 @@ function create_source_note(array $note): array
     $now = gmdate('c');
     $stmt = db()->prepare(
         'INSERT INTO source_notes (
-            source_id, quote_text, start_offset, end_offset, note_text, tag_labels, project_ids, created_at, updated_at
+            source_id, note_scope, quote_text, start_offset, end_offset, note_text, tag_labels, project_ids, created_at, updated_at
         ) VALUES (
-            :source_id, :quote_text, :start_offset, :end_offset, :note_text, CAST(:tag_labels AS jsonb), CAST(:project_ids AS jsonb), :created_at, :updated_at
+            :source_id, :note_scope, :quote_text, :start_offset, :end_offset, :note_text, CAST(:tag_labels AS jsonb), CAST(:project_ids AS jsonb), :created_at, :updated_at
         ) RETURNING *'
     );
     $stmt->execute([
         'source_id' => $sourceId,
+        'note_scope' => $noteScope,
         'quote_text' => $quoteText,
         'start_offset' => $startOffset,
         'end_offset' => $endOffset,

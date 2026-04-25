@@ -29,10 +29,15 @@ function render_header(string $title): void
             <nav class="nav">
                 <a href="/index.php">Home</a>
                 <a href="/dump.php">Add</a>
-                <a href="/cleanup.php">Cleanup</a>
-                <a href="/digest.php">Digest</a>
-                <a href="/settings.php">Settings</a>
-                <a href="/styles.php">Styles</a>
+                <details class="nav-more">
+                    <summary class="nav-more-summary">[ more... ]</summary>
+                    <div class="nav-more-panel">
+                        <a href="/cleanup.php">Cleanup</a>
+                        <a href="/digest.php">Digest</a>
+                        <a href="/styles.php">Styles</a>
+                        <a href="/settings.php">Settings</a>
+                    </div>
+                </details>
             </nav>
             <label class="header-citation-control" for="citation-format">
                 <span>Style</span>
@@ -71,6 +76,9 @@ function render_footer(): void
 {
     ?>
     </main>
+    <div id="floating-save-bar" class="floating-save-bar hidden" aria-hidden="true">
+        <button type="button" class="btn" id="floating-save-btn">Save changes</button>
+    </div>
     <div id="global-ai-activity" class="global-ai-activity hidden" role="status" aria-live="polite" aria-hidden="true" title="AI request in progress">
         <pre id="global-ai-activity-ascii" class="global-ai-activity-ascii"></pre>
     </div>

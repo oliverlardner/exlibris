@@ -5,6 +5,7 @@ require_once __DIR__ . '/lib/layout.php';
 require_once __DIR__ . '/lib/formatter.php';
 
 ensure_defaults();
+$allProjects = list_projects();
 
 $id = (int) ($_GET['id'] ?? 0);
 if ($id <= 0) {
@@ -23,6 +24,10 @@ $bodyText = trim((string) ($source['body_text'] ?? ''));
 $notes = list_source_notes((int) ($source['id'] ?? 0));
 $projectMap = projects_for_source_ids([(int) ($source['id'] ?? 0)]);
 $projects = $projectMap[(int) ($source['id'] ?? 0)] ?? [];
+$projectNames = array_values(array_filter(array_map(
+    static fn (array $project): string => trim((string) ($project['name'] ?? '')),
+    $projects
+)));
 
 render_header('View Source');
 ?>
@@ -44,10 +49,40 @@ render_header('View Source');
             <?php if ((string) ($source['year'] ?? '') !== ''): ?><span><?= h((string) $source['year']) ?></span><?php endif; ?>
             <?php if ((string) ($source['body_source'] ?? '') !== ''): ?><span><?= h(strtoupper((string) $source['body_source'])) ?></span><?php endif; ?>
             <?php if ((string) ($source['body_fetched_at'] ?? '') !== ''): ?><span><?= h((string) $source['body_fetched_at']) ?></span><?php endif; ?>
-            <?php foreach ($projects as $project): ?>
-                <span class="badge-collection"><?= h((string) ($project['name'] ?? '')) ?></span>
-            <?php endforeach; ?>
         </div>
+    </article>
+
+    <article class="card stack">
+        <h2>Collections</h2>
+        <p class="muted">Inline tags: pick from suggestions or type a new name. × removes. Save to persist.</p>
+        <form id="view-collections-form" class="stack" data-floating-save>
+            <div
+                class="project-token-field"
+                id="view-collections-token-field"
+                data-collections-save-id="<?= (int) ($source['id'] ?? 0) ?>"
+            >
+                <div class="project-token-box header-projects-editor" role="group" aria-label="Collections">
+                    <div class="project-token-chips header-project-chips"></div>
+                    <input
+                        type="text"
+                        class="project-token-input"
+                        list="project-name-options"
+                        placeholder="Add collection…"
+                        autocomplete="off"
+                    >
+                </div>
+                <input
+                    type="hidden"
+                    class="project-token-hidden"
+                    name="collections_snapshot"
+                    value="<?= h(implode(', ', $projectNames)) ?>"
+                    autocomplete="off"
+                >
+            </div>
+            <div class="actions">
+                <button type="submit" class="btn" id="view-collections-save">Save</button>
+            </div>
+        </form>
     </article>
 
     <?php if ($bodyText === ''): ?>
@@ -125,5 +160,10 @@ render_header('View Source');
     'body_text' => $bodyText,
 ], $jsonFlags) ?></script>
 <script id="viewer-notes-data" type="application/json"><?= json_encode($notes, $jsonFlags) ?></script>
+<datalist id="project-name-options">
+    <?php foreach ($allProjects as $project): ?>
+        <option value="<?= h((string) ($project['name'] ?? '')) ?>"></option>
+    <?php endforeach; ?>
+</datalist>
 <?php
 render_footer();
