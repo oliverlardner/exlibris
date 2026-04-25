@@ -135,6 +135,84 @@ function zotero_fetch_item(string $itemKey): ?array
     return is_array($item) ? $item : null;
 }
 
+/**
+ * Delete a Zotero library item by key (attachments follow Zotero rules for the item type).
+ *
+ * @return array{ok: bool, skipped: bool, detail: string}
+ */
+function zotero_delete_item_key(string $itemKey): array
+{
+    $itemKey = trim($itemKey);
+    if ($itemKey === '') {
+        return ['ok' => true, 'skipped' => true, 'detail' => 'empty_key'];
+    }
+
+    try {
+        $cfg = zotero_config();
+    } catch (Throwable) {
+        return ['ok' => true, 'skipped' => true, 'detail' => 'zotero_not_configured'];
+    }
+    if ($cfg['api_key'] === '' || $cfg['user_id'] === '') {
+        return ['ok' => true, 'skipped' => true, 'detail' => 'zotero_not_configured'];
+    }
+
+    $url = sprintf(
+        'https://api.zotero.org/%s/items/%s',
+        zotero_library_path(),
+        rawurlencode($itemKey)
+    );
+
+    $item = zotero_fetch_item($itemKey);
+    if ($item === null) {
+        return ['ok' => true, 'skipped' => false, 'detail' => 'zotero_item_missing'];
+    }
+
+    for ($attempt = 0; $attempt < 2; $attempt++) {
+        $version = $item['version'] ?? null;
+        $headers = zotero_headers();
+        if ($version !== null && $version !== '') {
+            $headers[] = 'If-Unmodified-Since-Version: ' . (string) (int) $version;
+        }
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => 45,
+            CURLOPT_CUSTOMREQUEST => 'DELETE',
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+
+        if ($code === 204) {
+            return ['ok' => true, 'skipped' => false, 'detail' => 'deleted'];
+        }
+        if ($code === 404) {
+            return ['ok' => true, 'skipped' => false, 'detail' => 'already_deleted'];
+        }
+        if (($code === 412 || $code === 428) && $attempt === 0) {
+            $refetch = zotero_fetch_item($itemKey);
+            if (!is_array($refetch)) {
+                return ['ok' => true, 'skipped' => false, 'detail' => 'zotero_item_missing'];
+            }
+            $item = $refetch;
+            continue;
+        }
+
+        $snippet = is_string($body) ? trim(substr($body, 0, 400)) : '';
+
+        return [
+            'ok' => false,
+            'skipped' => false,
+            'detail' => 'HTTP ' . (string) $code . ($snippet !== '' ? ': ' . $snippet : ''),
+        ];
+    }
+
+    return ['ok' => false, 'skipped' => false, 'detail' => 'version_conflict'];
+}
+
 function zotero_fetch_item_children(string $itemKey): array
 {
     $itemKey = trim($itemKey);

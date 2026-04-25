@@ -7,7 +7,10 @@ render_header('Cleanup');
 ?>
 <section class="stack">
     <h1>AI Un-fucker</h1>
-    <p class="muted">Scan for duplicate sources, review suggested keep/delete decisions, then apply cleanup safely.</p>
+    <p class="muted">
+        Scan for duplicate sources, review suggested keep/delete decisions, then apply cleanup safely.
+        When Zotero is configured in Settings, deleting a duplicate also removes that item from your Zotero library (unless it is the same item key as the record you keep).
+    </p>
 
     <article class="card stack">
         <div class="row">

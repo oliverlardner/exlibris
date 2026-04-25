@@ -93,7 +93,7 @@ Input is detected automatically and routed through the appropriate pipeline, in 
 - Zotero collections are mapped to local projects (`projects` + `source_project`).
 - Pushes can auto-create/use a Zotero collection (default: `Ex Libris`) and assign pushed items into it.
 - Local collections attached to a source are also synced to Zotero collections during push (created remotely if missing).
-- `cleanup.php` adds an AI-assisted duplicate detection/review/apply flow for post-sync deduping.
+- `cleanup.php` adds an AI-assisted duplicate detection/review/apply flow for post-sync deduping; applying a merge deletes extra Zotero items when Settings has a Zotero API key (via `zotero_delete_item_key`, using `If-Unmodified-Since-Version`).
 
 ### UI/UX
 

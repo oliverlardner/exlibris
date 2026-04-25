@@ -3088,9 +3088,28 @@
           if (!confirm(`Keep #${keepId} and delete ${deleteIds.length} duplicates?`)) return;
           try {
             applyBtn.textContent = "Cleaning...";
-            await postJson("/api/assistant.php", { action: "dedupe_apply", keep_id: keepId, delete_ids: deleteIds });
+            const applyData = await postJson("/api/assistant.php", {
+              action: "dedupe_apply",
+              keep_id: keepId,
+              delete_ids: deleteIds,
+            });
             card.remove();
-            if (status) status.textContent = `Applied group cleanup: kept #${keepId}, deleted ${deleteIds.length}.`;
+            if (status) {
+              let msg = `Applied group cleanup: kept #${keepId}, deleted ${deleteIds.length}.`;
+              const zDel = applyData.zotero_remote_deleted_keys;
+              const zErr = applyData.zotero_remote_errors;
+              const zSkip = applyData.zotero_skipped_not_configured_keys;
+              if (Array.isArray(zDel) && zDel.length) {
+                msg += ` Removed ${zDel.length} duplicate item(s) from Zotero.`;
+              }
+              if (Array.isArray(zSkip) && zSkip.length) {
+                msg += ` Zotero API not configured — ${zSkip.length} key(s) still exist in Zotero (configure Settings).`;
+              }
+              if (Array.isArray(zErr) && zErr.length) {
+                msg += ` Zotero errors: ${zErr.map((e) => e.detail || e.key).join("; ")}`;
+              }
+              status.textContent = msg;
+            }
           } catch (error) {
             if (status) status.textContent = error.message || "Cleanup failed.";
           } finally {

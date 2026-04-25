@@ -5,6 +5,7 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/formatter.php';
 require_once __DIR__ . '/openai.php';
 require_once __DIR__ . '/embeddings.php';
+require_once __DIR__ . '/zotero.php';
 
 function assistant_norm_text(string $value): string
 {
@@ -315,8 +316,40 @@ function assistant_handle_dedupe_apply(int $keepId, array $deleteIdsRaw): array
     regenerate_citation_cache_for_source($keepId);
     upsert_source_embedding($keepId);
 
+    $keepRowAfter = get_source($keepId);
+    if (!is_array($keepRowAfter)) {
+        throw new RuntimeException('Keep source missing after save');
+    }
+    $keepZoteroFinal = trim((string) ($keepRowAfter['zotero_item_key'] ?? ''));
+
+    $zoteroRemoteDeleted = [];
+    $zoteroRemoteErrors = [];
+    $zoteroSkippedNoApi = [];
+
     $deleted = [];
     foreach ($deleteIds as $deleteId) {
+        $delRow = get_source($deleteId);
+        if (!is_array($delRow)) {
+            continue;
+        }
+        $zKey = trim((string) ($delRow['zotero_item_key'] ?? ''));
+        if ($zKey !== '' && ($keepZoteroFinal === '' || $zKey !== $keepZoteroFinal)) {
+            $zRes = zotero_delete_item_key($zKey);
+            if ($zRes['ok']) {
+                if (!empty($zRes['skipped'])) {
+                    if (($zRes['detail'] ?? '') === 'zotero_not_configured') {
+                        $zoteroSkippedNoApi[] = $zKey;
+                    }
+                } else {
+                    $zoteroRemoteDeleted[] = $zKey;
+                }
+            } else {
+                $zoteroRemoteErrors[] = [
+                    'key' => $zKey,
+                    'detail' => (string) ($zRes['detail'] ?? 'Zotero delete failed'),
+                ];
+            }
+        }
         if (delete_source($deleteId)) {
             $deleted[] = $deleteId;
         }
@@ -326,5 +359,8 @@ function assistant_handle_dedupe_apply(int $keepId, array $deleteIdsRaw): array
         'keep_id' => $keepId,
         'deleted_ids' => $deleted,
         'deleted_count' => count($deleted),
+        'zotero_remote_deleted_keys' => $zoteroRemoteDeleted,
+        'zotero_remote_errors' => $zoteroRemoteErrors,
+        'zotero_skipped_not_configured_keys' => $zoteroSkippedNoApi,
     ];
 }
