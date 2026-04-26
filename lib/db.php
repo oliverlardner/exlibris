@@ -708,6 +708,11 @@ function source_note_to_array(array $row): array
         return [];
     };
 
+    $rawScope = (string) ($row['note_scope'] ?? 'body');
+    $noteScope = in_array($rawScope, ['body', 'reading_guide'], true)
+        ? $rawScope
+        : 'body';
+
     return [
         'id' => (int) ($row['id'] ?? 0),
         'source_id' => (int) ($row['source_id'] ?? 0),
@@ -719,9 +724,7 @@ function source_note_to_array(array $row): array
         'project_ids' => array_values(array_filter(array_map('intval', $decodeArray($row['project_ids'] ?? [])), static fn (int $id): bool => $id > 0)),
         'created_at' => (string) ($row['created_at'] ?? ''),
         'updated_at' => (string) ($row['updated_at'] ?? ''),
-        'note_scope' => in_array((string) ($row['note_scope'] ?? 'body'), ['body', 'reading_guide'], true)
-            ? (string) ($row['note_scope'] ?? 'body')
-            : 'body',
+        'note_scope' => $noteScope,
     ];
 }
 
@@ -771,29 +774,45 @@ function create_source_note(array $note): array
     }
 
     $bodyText = (string) ($source['body_text'] ?? '');
-    $aiSummaryRaw = (string) ($source['ai_summary'] ?? '');
-    $aiSummaryTrim = trim($aiSummaryRaw);
+    $readingGuideRaw = reading_guide_markdown_for_viewer($source);
+    $readingGuideTrim = trim($readingGuideRaw);
     $documentText = '';
+    $startOffset = max(0, (int) ($note['start_offset'] ?? 0));
+    $endOffset = max(0, (int) ($note['end_offset'] ?? 0));
+
     if ($noteScope === 'body') {
         if ($bodyText === '') {
             throw new RuntimeException('Source has no extracted text to annotate.');
         }
         $documentText = $bodyText;
     } else {
-        if ($aiSummaryTrim === '') {
+        if ($readingGuideTrim === '') {
             throw new RuntimeException('No AI reading guide text to annotate.');
         }
-        $documentText = viewer_markdown_plain_text($aiSummaryRaw);
+        $documentText = viewer_markdown_plain_text($readingGuideRaw);
     }
 
-    $startOffset = max(0, (int) ($note['start_offset'] ?? 0));
-    $endOffset = max(0, (int) ($note['end_offset'] ?? 0));
     if ($endOffset <= $startOffset) {
         throw new RuntimeException('Annotation range is invalid.');
     }
-    $bodyLength = mb_strlen($documentText);
+    $enc = 'UTF-8';
+    $bodyLength = mb_strlen($documentText, $enc);
+    $quoteTextRaw = trim((string) ($note['quote_text'] ?? ''));
+    $sliceLen = max(0, $endOffset - $startOffset);
+    $slice = $sliceLen > 0 ? mb_substr($documentText, $startOffset, $sliceLen, $enc) : '';
+    $needsAlign = $endOffset > $bodyLength || ($quoteTextRaw !== '' && $slice !== $quoteTextRaw);
+    if ($needsAlign && $quoteTextRaw !== '') {
+        $aligned = viewer_align_note_range_to_quote($documentText, $startOffset, $endOffset, $quoteTextRaw, $enc);
+        if (is_array($aligned)) {
+            [$startOffset, $endOffset] = $aligned;
+        }
+    }
     if ($endOffset > $bodyLength) {
         throw new RuntimeException('Annotation range exceeds document text length.');
+    }
+    $verifySlice = mb_substr($documentText, $startOffset, $endOffset - $startOffset, $enc);
+    if ($quoteTextRaw !== '' && trim($verifySlice) !== $quoteTextRaw) {
+        throw new RuntimeException('Highlight does not match the current document text. Try selecting the passage again.');
     }
 
     $projectIds = $note['project_ids'] ?? [];
@@ -808,10 +827,7 @@ function create_source_note(array $note): array
     }
     $tagLabels = array_values(array_unique(array_filter(array_map(static fn (mixed $value): string => trim((string) $value), $tagLabels))));
 
-    $quoteText = trim((string) ($note['quote_text'] ?? ''));
-    if ($quoteText === '') {
-        $quoteText = mb_substr($documentText, $startOffset, $endOffset - $startOffset);
-    }
+    $quoteText = $quoteTextRaw !== '' ? $quoteTextRaw : mb_substr($documentText, $startOffset, $endOffset - $startOffset, $enc);
     $noteText = trim((string) ($note['note_text'] ?? ''));
     if ($quoteText === '' || $noteText === '') {
         throw new RuntimeException('Both highlighted text and note text are required.');

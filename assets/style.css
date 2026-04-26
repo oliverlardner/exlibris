@@ -388,6 +388,14 @@ textarea.drop-active {
   box-shadow: none;
 }
 
+.source-page-notes .source-notes-textarea {
+  width: 100%;
+  min-height: 18rem;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: hidden;
+}
+
 .global-dropzone {
   position: fixed;
   inset: 0;

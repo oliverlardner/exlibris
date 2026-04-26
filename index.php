@@ -28,19 +28,20 @@ foreach ($rows as $row) {
         static fn (array $project): string => trim((string) ($project['name'] ?? '')),
         $entryProjects
     )));
-    $search = implode(' ', array_filter([
+    $searchBase = implode(' ', array_filter([
         $source['title'],
         implode(', ', $source['authors']),
         $source['doi'],
         $source['isbn'],
         $source['notes'],
-        implode(' ', $projectLabels),
     ]));
+    $search = trim($searchBase . ' ' . implode(' ', $projectLabels));
 
     $entries[] = [
         'source' => $source,
         'citation' => $citation,
         'search' => $search,
+        'search_base' => $searchBase,
         'projects' => $entryProjects,
         'note_count' => (int) ($noteCountMap[(int) ($source['id'] ?? 0)] ?? 0),
     ];
@@ -110,6 +111,7 @@ render_header('Bibliography');
             $source = $entry['source'];
             $citation = (string) $entry['citation'];
             $search = (string) $entry['search'];
+            $searchBase = (string) ($entry['search_base'] ?? '');
             $projects = is_array($entry['projects'] ?? null) ? $entry['projects'] : [];
             $noteCount = (int) ($entry['note_count'] ?? 0);
             $safeUrl = safe_external_url((string) ($source['url'] ?? ''));
@@ -128,6 +130,7 @@ render_header('Bibliography');
                 class="card"
                 data-source-card
                 data-source-id="<?= (int) ($source['id'] ?? 0) ?>"
+                data-search-base="<?= h($searchBase) ?>"
                 data-search="<?= h($search) ?>"
                 data-citation="<?= h($citation) ?>"
                 data-collection-ids="<?= h($projectIds) ?>"
@@ -180,18 +183,43 @@ render_header('Bibliography');
                     <?php if ($source['year'] !== ''): ?><span><?= h($source['year']) ?></span><?php endif; ?>
                     <?php if ($source['doi'] !== ''): ?><span>DOI: <?= h($source['doi']) ?></span><?php endif; ?>
                     <?php if (($source['origin_provider'] ?? '') === 'zotero'): ?><span class="badge-zotero">Zotero</span><?php endif; ?>
-                    <?php foreach ($projects as $project): ?>
-                        <?php $pid = (int) ($project['id'] ?? 0); ?>
-                        <?php if ($pid > 0): ?>
-                            <a
-                                class="badge-collection"
-                                href="/index.php?collection=<?= $pid ?>"
-                                title="Bibliography: sources in this collection"
-                            ><?= h((string) ($project['name'] ?? '')) ?></a>
-                        <?php else: ?>
-                            <span class="badge-collection"><?= h((string) ($project['name'] ?? '')) ?></span>
-                        <?php endif; ?>
-                    <?php endforeach; ?>
+                </div>
+                <div class="stack source-card-collections">
+                    <span>Collections</span>
+                    <form
+                        id="index-collections-<?= (int) ($source['id'] ?? 0) ?>"
+                        class="stack"
+                        data-index-source-collections
+                    >
+                        <div
+                            class="project-token-field"
+                            data-collections-save-id="<?= (int) ($source['id'] ?? 0) ?>"
+                        >
+                            <div class="project-token-box header-projects-editor" role="group" aria-label="Collections">
+                                <div class="project-token-chips header-project-chips"></div>
+                                <input
+                                    type="text"
+                                    class="project-token-input"
+                                    list="project-name-options"
+                                    placeholder="Type — match suggestions or add a new tag. Enter or comma to add."
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <input
+                                type="hidden"
+                                class="project-token-hidden"
+                                name="collections_snapshot"
+                                value="<?= h(implode(', ', array_values(array_filter(array_map(
+                                    static fn (array $project): string => trim((string) ($project['name'] ?? '')),
+                                    $projects
+                                ))))) ?>"
+                                autocomplete="off"
+                            >
+                        </div>
+                        <div class="actions">
+                            <button type="submit" class="btn btn-secondary index-collections-save">Save collections</button>
+                        </div>
+                    </form>
                 </div>
                 <div class="actions">
                     <a class="btn btn-load" href="/source.php?id=<?= (int) $source['id'] ?>">Load</a>
@@ -210,6 +238,14 @@ render_header('Bibliography');
             </article>
         <?php endforeach; ?>
     </div>
+
+    <datalist id="project-name-options">
+        <?php foreach ($allProjects as $project): ?>
+            <option value="<?= h((string) ($project['name'] ?? '')) ?>"></option>
+        <?php endforeach; ?>
+    </datalist>
+
+    <p id="app-status" class="muted" role="status" aria-live="polite"></p>
 
     <article class="card stack">
         <div class="row">

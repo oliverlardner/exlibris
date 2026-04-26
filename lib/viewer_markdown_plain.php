@@ -265,3 +265,133 @@ function viewer_parse_inline_markdown_viewer(string $value, array $classes, stri
 
     return $out;
 }
+
+/**
+ * Full reading guide markdown for the on-page viewer: main summary plus
+ * structured lists so highlights/notes share one document with the guide body.
+ *
+ * @param array<string, mixed> $source
+ */
+function reading_guide_markdown_for_viewer(array $source): string
+{
+    $summary = (string) ($source['ai_summary'] ?? '');
+    $claims = is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [];
+    $methods = is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [];
+    $limits = is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [];
+
+    return ensure_reading_guide_sections_in_summary($summary, $claims, $methods, $limits);
+}
+
+/**
+ * Return $summary as-is when it already has the standard "## Key claims",
+ * "## Methods / approach", "## Limitations" sections. Otherwise append any
+ * sections that are missing using the legacy array fields, so older sources
+ * (where claims/methods/limitations were stored separately) keep showing the
+ * same guide content in one merged document.
+ */
+function ensure_reading_guide_sections_in_summary(
+    string $summary,
+    array $claims,
+    array $methods,
+    array $limitations
+): string {
+    $summary = (string) $summary;
+    $parts = [];
+    if (trim($summary) !== '') {
+        $parts[] = rtrim($summary);
+    }
+
+    $hasSection = static function (string $haystack, string $title): bool {
+        $needle = '/(^|\n)\s{0,3}#{2,6}\s+' . preg_quote($title, '/') . '\s*(\n|$)/i';
+        return (bool) preg_match($needle, $haystack);
+    };
+
+    $appendList = static function (string $title, array $items) use (&$parts, $hasSection): void {
+        if ($hasSection(implode('', $parts), $title)) {
+            return;
+        }
+        $clean = [];
+        foreach ($items as $item) {
+            $s = trim((string) $item);
+            if ($s !== '') {
+                $clean[] = $s;
+            }
+        }
+        if ($clean === []) {
+            return;
+        }
+        $bullets = [];
+        foreach ($clean as $line) {
+            $oneLine = preg_replace('/\s+/u', ' ', $line) ?? $line;
+            $bullets[] = '- ' . $oneLine;
+        }
+        $parts[] = "\n\n## {$title}\n\n" . implode("\n\n", $bullets);
+    };
+
+    $appendList('Key claims', $claims);
+    $appendList('Methods / approach', $methods);
+    $appendList('Limitations', $limitations);
+
+    return implode('', $parts);
+}
+
+/**
+ * Re-align note offsets when the client range does not match the stored plain
+ * document (Unicode counting drift, stale offsets after guide edits). Uses
+ * quote_text and picks the closest occurrence to the reported start offset.
+ *
+ * @return array{0: int, 1: int}|null [start, end] in UTF-8 code points, or null
+ */
+function viewer_align_note_range_to_quote(
+    string $documentText,
+    int $startOffset,
+    int $endOffset,
+    string $quoteText,
+    string $encoding = 'UTF-8'
+): ?array {
+    $quote = trim($quoteText);
+    if ($quote === '') {
+        return null;
+    }
+    $docLen = mb_strlen($documentText, $encoding);
+    if ($docLen <= 0) {
+        return null;
+    }
+    $quoteLen = mb_strlen($quote, $encoding);
+    if ($quoteLen <= 0) {
+        return null;
+    }
+    $sliceLen = max(0, $endOffset - $startOffset);
+    $slice = $sliceLen > 0 ? mb_substr($documentText, $startOffset, $sliceLen, $encoding) : '';
+    if ($slice === $quote) {
+        return [$startOffset, $endOffset];
+    }
+    $positions = [];
+    $from = 0;
+    while (true) {
+        $pos = mb_strpos($documentText, $quote, $from, $encoding);
+        if ($pos === false) {
+            break;
+        }
+        $positions[] = (int) $pos;
+        $from = $pos + 1;
+    }
+    if ($positions === []) {
+        return null;
+    }
+    $best = $positions[0];
+    $bestDist = abs($best - $startOffset);
+    foreach ($positions as $pos) {
+        $d = abs($pos - $startOffset);
+        if ($d < $bestDist || ($d === $bestDist && $pos < $best)) {
+            $best = $pos;
+            $bestDist = $d;
+        }
+    }
+    $newEnd = $best + $quoteLen;
+    if ($newEnd > $docLen) {
+        return null;
+    }
+
+    return [$best, $newEnd];
+}

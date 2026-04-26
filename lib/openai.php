@@ -213,7 +213,9 @@ function openai_extract_source(string $input, ?string $url = null): ?array
             'content' => 'You are a bibliographic metadata assistant. Given the input, extract or identify the metadata and return only valid JSON. ' .
                 'Schema keys: type (book/article/video/website/other), title, authors, year, publisher, journal, volume, issue, pages, doi, isbn, url, notes. ' .
                 'authors must be an array of strings. ' .
-                'Identify the work from the input text. Fill title, authors, year, and publisher when you can do so reliably. ' .
+                'Users often paste conversational requests (e.g. asking for an APA, MLA, or Chicago 17/18 citation, or saying "I need a reference for…"). Ignore citation-style names and prose; identify the actual work they mean. ' .
+                'For books, articles, websites, and videos (films, TV/streaming titles): you may use your knowledge of the real world to fill title, authors/creators, year, and publisher when the user clearly names a specific work. ' .
+                'For films and episodic video: use type "video". Put the official English release title in title (omit trailing phrases like "the movie" or "the film" from the title field). Put director(s) in authors when that is standard for citations. Put the primary production company or distributor in publisher when known. Use the first public screening or release year in year. ' .
                 'For isbn and doi: use ONLY values that appear literally in the input (or in pasted citation metadata). Do not invent or recall identifiers from memory. ' .
                 'Use empty string for unknown scalar values.',
         ],

@@ -43,8 +43,17 @@ try {
 regenerate_citation_cache_for_source($id);
 upsert_source_embedding($id);
 
+$map = projects_for_source_ids([$id]);
+$projects = $map[$id] ?? [];
+
 json_response([
     'ok' => true,
     'id' => $id,
     'project_names' => $names,
+    'projects' => array_values(array_map(static function (array $p): array {
+        return [
+            'id' => (int) ($p['id'] ?? 0),
+            'name' => trim((string) ($p['name'] ?? '')),
+        ];
+    }, $projects)),
 ]);

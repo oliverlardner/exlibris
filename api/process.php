@@ -355,8 +355,12 @@ try {
             }
         }
     } else {
-        // Free-text input: AI recall + Open Library enrichment
-        $result = openai_extract_source($input);
+        // Free-text input: AI recall + Open Library enrichment (books only).
+        $freeTextForAi = normalize_free_text_dump_query($input);
+        if ($freeTextForAi === '') {
+            $freeTextForAi = $input;
+        }
+        $result = openai_extract_source($freeTextForAi);
         $lookupTrace[] = [
             'step'   => 'openai_extract',
             'status' => is_array($result) ? 'success' : 'no_result',
@@ -366,8 +370,11 @@ try {
 
         // When confidence is low (no ISBN/DOI, missing title or year, or title
         // doesn't match the input at all), generate a list of OL candidates.
-        if (is_low_confidence_result($result, $input)) {
-            $suggestions = generate_suggestions($input, is_array($result) ? $result : []);
+        // Open Library is book-centric; do not suggest books for resolved videos.
+        $suggestionQuery = $freeTextForAi !== '' ? $freeTextForAi : $input;
+        $resultType = strtolower(trim((string) (is_array($result) ? ($result['type'] ?? '') : '')));
+        if (is_low_confidence_result($result, $suggestionQuery) && $resultType !== 'video') {
+            $suggestions = generate_suggestions($suggestionQuery, is_array($result) ? $result : []);
             if ($suggestions !== []) {
                 $lookupTrace[] = [
                     'step'   => 'suggestions',
@@ -425,6 +432,40 @@ try {
         'ok' => false,
         'error' => $message,
     ], 502);
+}
+
+/**
+ * Strips citation-request boilerplate so the model sees the work (e.g.
+ * "I need a Chicago 18 citation for the movie Pusher" → "Pusher").
+ */
+function normalize_free_text_dump_query(string $input): string
+{
+    $s = trim(preg_replace('/\s+/u', ' ', $input) ?? '');
+    if ($s === '') {
+        return '';
+    }
+
+    $patterns = [
+        '/^\s*(?:please\s+)?(?:i\s+need|i\s+want|i\'d\s+like|i\s+am\s+looking\s+for|looking\s+for|help\s+me\s+(?:with|write))(?:\s+please)?\s+(?:to\s+)?(?:get|have|obtain|find|write|build|make|create|format)?\s+(?:a|an|the|my)?\s+/iu',
+        '/^\s*(?:can|could)\s+you\s+(?:please\s+)?(?:give|provide|send|format|write|get)\s+me\s+(?:a|an|the|my)?\s*/iu',
+        '/\b(?:chicago|apa|mla|harvard|ieee|turabian)\s*(?:manual\s+of\s+style|manual|style|edition)?\s*(?:\d{1,4})?\s*(?:citation|reference|bibliography|bibliographic\s+entry)\s+for\s+(?:a|an|the)?\s*/iu',
+        '/\b(?:chicago|apa|mla)\s+\d{2,4}\s+citation\s+for\s+(?:a|an|the)?\s*/iu',
+        '/\b(?:citation|reference|bibliography)\s+for\s+(?:a|an|the)?\s*/iu',
+        '/\s+the\s+movie\s*$/iu',
+        '/\s+the\s+film\s*$/iu',
+        '/\s+a\s+film\s*$/iu',
+    ];
+
+    $prev = null;
+    while ($prev !== $s) {
+        $prev = $s;
+        foreach ($patterns as $re) {
+            $s = preg_replace($re, '', $s) ?? '';
+        }
+        $s = trim(preg_replace('/\s+/u', ' ', $s) ?? '');
+    }
+
+    return $s;
 }
 
 function fetch_page_html(string $url): string

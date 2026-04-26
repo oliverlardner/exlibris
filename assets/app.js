@@ -33,6 +33,15 @@
     }
   }
 
+  /** Unicode code point length — must match Range/toString + PHP mb_strlen for viewer offsets. */
+  function viewerTextCodePointLength(value) {
+    return Array.from(String(value || "")).length;
+  }
+
+  function viewerTextSlice(value, start, end) {
+    return Array.from(String(value || "")).slice(start, end).join("");
+  }
+
   function adminToken() {
     return localStorage.getItem("exlibris_admin_token") || "";
   }
@@ -249,12 +258,11 @@
     };
     if (action === "annotate_source") {
       const ann = data.annotation || {};
-      const summary = String(ann.summary || "").trim();
       const sourceId = Number(meta.sourceId || data.source_id || 0);
-      if (summary && readingGuideSurfaceApi && typeof readingGuideSurfaceApi.replaceSourceText === "function") {
-        readingGuideSurfaceApi.replaceSourceText(summary);
-        updateReadingGuideMetaLists(ann);
-        syncReadingGuideViewerScripts(sourceId, summary);
+      const fullMd = readingGuideMarkdownFromAnnotation(ann);
+      if (fullMd && readingGuideSurfaceApi && typeof readingGuideSurfaceApi.replaceSourceText === "function") {
+        readingGuideSurfaceApi.replaceSourceText(fullMd);
+        syncReadingGuideViewerScripts(sourceId, fullMd);
         qs("#reading-guide-empty-hint")?.classList.add("hidden");
         qs("#reading-guide-active-hint")?.classList.remove("hidden");
         out.appendChild(
@@ -704,9 +712,14 @@
       form.dataset.floatingSaveWired = "1";
       floatingSaveForms.push(form);
       refreshFloatingSaveSnapshot(form);
-      ["input", "change"].forEach((ev) =>
-        form.addEventListener(ev, () => updateFloatingSaveBar(), true)
-      );
+      const bump = () => updateFloatingSaveBar();
+      ["input", "change"].forEach((ev) => form.addEventListener(ev, bump, true));
+      const fid = form.id || "";
+      if (fid) {
+        qsa(`[form="${fid}"]`).forEach((el) => {
+          ["input", "change"].forEach((ev) => el.addEventListener(ev, bump, true));
+        });
+      }
     });
     btn.addEventListener("click", () => submitDirtyFloatingSaveForm());
 
@@ -1527,30 +1540,37 @@
     const segmentText = String(segment?.text || "");
     if (!segmentText) return;
 
+    const segLen = viewerTextCodePointLength(segmentText);
+    const segmentEnd = startOffset + segLen;
     let localCursor = 0;
-    while (localCursor < segmentText.length) {
+    while (localCursor < segLen) {
       const absoluteOffset = startOffset + localCursor;
       const overlappingNote = notes.find((note) => {
         const noteStart = Number(note.start_offset || 0);
         const noteEnd = Number(note.end_offset || 0);
-        return noteEnd > absoluteOffset && noteStart < startOffset + segmentText.length;
+        return noteEnd > absoluteOffset && noteStart < segmentEnd;
       });
 
       if (!overlappingNote) {
-        appendStyledViewerText(container, segmentText.slice(localCursor), segment.classes || [], segment.href || "");
+        appendStyledViewerText(container, viewerTextSlice(segmentText, localCursor, segLen), segment.classes || [], segment.href || "");
         return;
       }
 
       const noteStart = Number(overlappingNote.start_offset || 0);
       const noteEnd = Number(overlappingNote.end_offset || 0);
       if (noteStart > absoluteOffset) {
-        const plainChunkLength = Math.min(segmentText.length - localCursor, noteStart - absoluteOffset);
-        appendStyledViewerText(container, segmentText.slice(localCursor, localCursor + plainChunkLength), segment.classes || [], segment.href || "");
+        const plainChunkLength = Math.min(segLen - localCursor, noteStart - absoluteOffset);
+        appendStyledViewerText(
+          container,
+          viewerTextSlice(segmentText, localCursor, localCursor + plainChunkLength),
+          segment.classes || [],
+          segment.href || ""
+        );
         localCursor += plainChunkLength;
         continue;
       }
 
-      const highlightedLength = Math.min(segmentText.length - localCursor, noteEnd - absoluteOffset);
+      const highlightedLength = Math.min(segLen - localCursor, noteEnd - absoluteOffset);
       const mark = document.createElement("mark");
       mark.className = "viewer-highlight";
       const noteId = Number(overlappingNote.id || 0);
@@ -1559,7 +1579,12 @@
       }
       mark.setAttribute("data-note-id", String(noteId));
       mark.addEventListener("click", () => onActivateNote(noteId));
-      appendStyledViewerText(mark, segmentText.slice(localCursor, localCursor + highlightedLength), segment.classes || [], segment.href || "");
+      appendStyledViewerText(
+        mark,
+        viewerTextSlice(segmentText, localCursor, localCursor + highlightedLength),
+        segment.classes || [],
+        segment.href || ""
+      );
       container.appendChild(mark);
       localCursor += highlightedLength;
     }
@@ -1647,14 +1672,52 @@
       renderViewer();
     };
 
-    const textLength = (value) => Array.from(String(value || "")).length;
-    const textSlice = (value, start, end) => Array.from(String(value || "")).slice(start, end).join("");
+    const textLength = viewerTextCodePointLength;
+    const textSlice = viewerTextSlice;
 
-    const getRangeOffset = (container, offset) => {
-      const range = document.createRange();
-      range.selectNodeContents(panel);
-      range.setEnd(container, offset);
-      return textLength(range.toString());
+    // Walk the panel's text nodes in document order and accumulate code-point
+    // lengths up to the boundary (textNode + offset, or element + childIndex).
+    // We avoid range.toString() because some browsers drop separator-only text
+    // nodes between display:block siblings, which shifts offsets by hundreds
+    // of chars for selections deep in the document.
+    const getRangeOffset = (boundaryNode, boundaryOffset) => {
+      if (!boundaryNode) return 0;
+      if (!panel.contains(boundaryNode) && boundaryNode !== panel) return 0;
+
+      const boundaryRange = document.createRange();
+      try {
+        boundaryRange.setStart(boundaryNode, boundaryOffset);
+        boundaryRange.setEnd(boundaryNode, boundaryOffset);
+      } catch (_) {
+        return 0;
+      }
+
+      const walker = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
+      let total = 0;
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node === boundaryNode) {
+          total += textLength(node.data.slice(0, boundaryOffset));
+          return total;
+        }
+        const nodeRange = document.createRange();
+        nodeRange.selectNodeContents(node);
+        // Node starts at or after the boundary -> stop accumulating.
+        if (nodeRange.compareBoundaryPoints(Range.START_TO_START, boundaryRange) >= 0) {
+          break;
+        }
+        // Node ends at or before the boundary -> include its full text.
+        if (nodeRange.compareBoundaryPoints(Range.END_TO_END, boundaryRange) <= 0) {
+          total += textLength(node.data);
+          continue;
+        }
+        // Boundary is inside this text node but the boundary container is an
+        // element ancestor. Approximate by including the whole text node — this
+        // path is rarely hit because selections normally land on text nodes.
+        total += textLength(node.data);
+        break;
+      }
+      return total;
     };
 
     const topRelToNotesLayer = (el) => {
@@ -1662,13 +1725,33 @@
       return el.getBoundingClientRect().top - notesLayer.getBoundingClientRect().top;
     };
 
+    const panelTotalLength = () => {
+      let total = 0;
+      const walker = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        total += textLength(node.data);
+      }
+      return total;
+    };
+
     const updateSelectionState = () => {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
       const range = selection.getRangeAt(0);
-      if (!panel.contains(range.commonAncestorContainer)) return;
-      const startOffset = getRangeOffset(range.startContainer, range.startOffset);
-      const endOffset = getRangeOffset(range.endContainer, range.endOffset);
+      const startInPanel = panel.contains(range.startContainer);
+      const endInPanel = panel.contains(range.endContainer);
+      // Drags that finish over the notes rail end up with commonAncestor === stage,
+      // so an exact panel.contains(commonAncestorContainer) check rejects valid
+      // panel-only selections. Accept anything that touches the panel and clamp
+      // out-of-panel endpoints to the panel boundary.
+      if (!startInPanel && !endInPanel) return;
+      const startOffset = startInPanel
+        ? getRangeOffset(range.startContainer, range.startOffset)
+        : 0;
+      const endOffset = endInPanel
+        ? getRangeOffset(range.endContainer, range.endOffset)
+        : panelTotalLength();
       if (endOffset <= startOffset) return;
       const quote = textSlice(text, startOffset, endOffset).trim();
       if (!quote) return;
@@ -1714,7 +1797,7 @@
               renderViewer();
             }
           );
-          cursor += String(segment.text || "").length;
+          cursor += textLength(segment.text || "");
         });
         panel.appendChild(blockEl);
         if (blockIndex < markdownDoc.blocks.length - 1) {
@@ -1853,8 +1936,12 @@
       queueAnnotationLayout();
     }
 
-    panel.addEventListener("mouseup", updateSelectionState);
-    panel.addEventListener("keyup", updateSelectionState);
+    // Listen on the stage (not only the text panel): users often finish the drag
+    // over the notes rail to the right, so mouseup never fires on the panel and
+    // the selection card never opens. The stage wraps both columns.
+    stage.addEventListener("mouseup", updateSelectionState);
+    stage.addEventListener("pointerup", updateSelectionState);
+    stage.addEventListener("keyup", updateSelectionState);
 
     if (fontFamilySelect && fontSizeSelect) {
       fontFamilySelect.addEventListener("change", () => {
@@ -2011,28 +2098,36 @@
     }
   }
 
-  function updateReadingGuideMetaLists(ann) {
-    const wrap = qs("#reading-guide-meta-lists");
-    if (!wrap) return;
-    wrap.innerHTML = "";
+  /**
+   * Same markdown shape as PHP reading_guide_markdown_for_viewer: summary plus
+   * ## sections for claims / methods / limitations so the in-page viewer can
+   * highlight and note the full guide.
+   */
+  function readingGuideMarkdownFromAnnotation(ann) {
+    const a = ann && typeof ann === "object" ? ann : {};
+    const summary = String(a.summary || "");
+    const parts = [];
+    const trimmed = summary.replace(/\s+$/, "");
+    if (trimmed) parts.push(trimmed);
+    const hasSection = (title) =>
+      new RegExp(
+        `(^|\\n)\\s{0,3}#{2,6}\\s+${title.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*(\\n|$)`,
+        "i"
+      ).test(parts.join(""));
     const addList = (title, items) => {
-      if (!Array.isArray(items) || !items.length) return;
-      const lead = document.createElement("p");
-      const strong = document.createElement("strong");
-      strong.textContent = title;
-      lead.appendChild(strong);
-      wrap.appendChild(lead);
-      const ul = document.createElement("ul");
-      items.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = String(item || "");
-        ul.appendChild(li);
-      });
-      wrap.appendChild(ul);
+      if (hasSection(title)) return;
+      const arr = Array.isArray(items)
+        ? items
+            .map((x) => String(x || "").replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+        : [];
+      if (!arr.length) return;
+      parts.push(`\n\n## ${title}\n\n` + arr.map((s) => `- ${s}`).join("\n\n"));
     };
-    addList("Key claims", ann.key_claims);
-    addList("Methods / approach", ann.methods);
-    addList("Limitations", ann.limitations);
+    addList("Key claims", a.key_claims ?? a.keyClaims);
+    addList("Methods / approach", a.methods);
+    addList("Limitations", a.limitations);
+    return parts.join("");
   }
 
   async function downloadDbBackup(format) {
@@ -2990,6 +3085,82 @@
     if (root) mergeHeaderIntoProjectTokenField(root);
   }
 
+  /** Source detail: notes textarea grows with content (respects CSS min-height, caps at viewport). */
+  function wireSourceNotesAutosize() {
+    const ta = qs("#source-notes-field");
+    if (!ta || ta.dataset.autosizeWired === "1") return;
+    ta.dataset.autosizeWired = "1";
+
+    const resize = () => {
+      const styles = window.getComputedStyle(ta);
+      const minPx = Math.ceil(parseFloat(styles.minHeight) || 0);
+      const maxPx = Math.max(240, Math.floor(window.innerHeight * 0.88));
+      ta.style.overflowY = "hidden";
+      ta.style.height = "auto";
+      const need = ta.scrollHeight;
+      const floor = minPx > 0 ? minPx : need;
+      const next = Math.min(Math.max(need, floor), maxPx);
+      ta.style.height = `${next}px`;
+      ta.style.overflowY = need > maxPx ? "auto" : "hidden";
+    };
+
+    ta.addEventListener("input", resize);
+    ta.addEventListener("paste", () => requestAnimationFrame(resize));
+    window.addEventListener("resize", resize);
+    requestAnimationFrame(() => requestAnimationFrame(resize));
+  }
+
+  function mergeProjectsIntoPageCatalog(projectRows) {
+    if (!Array.isArray(projectRows) || !projectRows.length) return;
+    const byId = new Map();
+    currentProjectOptions().forEach((p) => {
+      if (p.id > 0 && p.name) byId.set(p.id, { id: p.id, name: p.name });
+    });
+    projectRows.forEach((row) => {
+      const id = Number(row?.id || 0);
+      const name = String(row?.name || "").trim();
+      if (id > 0 && name) byId.set(id, { id, name });
+    });
+    const merged = Array.from(byId.values());
+    const script = qs("#current-projects-data");
+    if (script) script.textContent = JSON.stringify(merged);
+
+    const filterSel = qs("#collection-filter");
+    if (filterSel) {
+      const existing = new Set(Array.from(filterSel.options).map((o) => String(o.value || "").trim()));
+      merged.forEach((p) => {
+        const v = String(p.id);
+        if (v && !existing.has(v)) {
+          const opt = document.createElement("option");
+          opt.value = v;
+          opt.textContent = p.name;
+          filterSel.appendChild(opt);
+          existing.add(v);
+        }
+      });
+    }
+
+    const syncDatalist = (datalist) => {
+      if (!datalist) return;
+      const names = new Set(
+        Array.from(datalist.querySelectorAll("option"))
+          .map((o) => String(o.value || "").trim().toLowerCase())
+          .filter(Boolean)
+      );
+      merged.forEach((p) => {
+        const k = p.name.toLowerCase();
+        if (p.name && !names.has(k)) {
+          const opt = document.createElement("option");
+          opt.value = p.name;
+          datalist.appendChild(opt);
+          names.add(k);
+        }
+      });
+    };
+    syncDatalist(qs("#project-name-options"));
+    syncDatalist(qs("#current-project-options"));
+  }
+
   function wireViewCollectionsEditor() {
     const form = qs("#view-collections-form");
     const root = qs("#view-collections-token-field");
@@ -3006,14 +3177,54 @@
         const hidden = root.querySelector(".project-token-hidden");
         const project_names = parseProjectTagList(hidden?.value || "");
         if (saveBtn) saveBtn.disabled = true;
-        await postJson("/api/source_collections.php", { id: sourceId, project_names });
+        const data = await postJson("/api/source_collections.php", { id: sourceId, project_names });
         if (status) status.textContent = "Collections saved.";
+        mergeProjectsIntoPageCatalog(data.projects || []);
         refreshFloatingSaveSnapshot(form);
       } catch (error) {
         if (status) status.textContent = error.message || "Could not save collections.";
       } finally {
         if (saveBtn) saveBtn.disabled = false;
       }
+    });
+  }
+
+  function wireIndexSourceCollectionForms() {
+    qsa("form[data-index-source-collections]").forEach((form) => {
+      if (form.dataset.indexCollectionsWired === "1") return;
+      form.dataset.indexCollectionsWired = "1";
+      const root = form.querySelector(".project-token-field[data-collections-save-id]");
+      if (!root) return;
+      const sourceId = Number(root.getAttribute("data-collections-save-id") || 0);
+      if (!sourceId) return;
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const saveBtn = form.querySelector(".index-collections-save");
+        try {
+          flushProjectTokenInput(root);
+          const hidden = root.querySelector(".project-token-hidden");
+          const project_names = parseProjectTagList(hidden?.value || "");
+          if (saveBtn) saveBtn.disabled = true;
+          const data = await postJson("/api/source_collections.php", { id: sourceId, project_names });
+          const card = form.closest("[data-source-card]");
+          const projects = Array.isArray(data.projects) ? data.projects : [];
+          const ids = projects.map((p) => Number(p?.id || 0)).filter((id) => id > 0);
+          if (card) {
+            card.setAttribute("data-collection-ids", ids.join(","));
+            const base = String(card.getAttribute("data-search-base") || "").trim();
+            const names = projects.map((p) => String(p?.name || "").trim()).filter(Boolean);
+            card.setAttribute("data-search", `${base} ${names.join(" ")}`.trim());
+          }
+          mergeProjectsIntoPageCatalog(projects);
+          setStatus("Collections saved.");
+          const searchInput = qs("#search-input");
+          if (searchInput) searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+        } catch (error) {
+          setStatus(error.message || "Could not save collections.", true);
+        } finally {
+          if (saveBtn) saveBtn.disabled = false;
+        }
+      });
     });
   }
 
@@ -3155,8 +3366,10 @@
     wireDropInput();
     wireSearchAndCards();
     wireAllProjectTokenFields();
+    wireIndexSourceCollectionForms();
     wireViewCollectionsEditor();
     wireSourcePageCollectionsField();
+    wireSourceNotesAutosize();
     wireDedupeCleanup();
     wireThemeAndFormat();
     wireCurrentProjects();

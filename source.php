@@ -40,10 +40,9 @@ $citation = (string) ($cache[$format] ?? format_citation($source, $format));
 $aiSummary = trim((string) ($source['ai_summary'] ?? ''));
 $aiSummaryRaw = (string) ($source['ai_summary'] ?? '');
 $readingGuideNotes = list_source_notes($id, 'reading_guide');
+$readingGuideFullMarkdown = reading_guide_markdown_for_viewer($source);
+$readingGuideHasContent = trim($readingGuideFullMarkdown) !== '';
 $jsonScriptFlags = JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT;
-$aiClaims = is_array($source['ai_claims'] ?? null) ? $source['ai_claims'] : [];
-$aiMethods = is_array($source['ai_methods'] ?? null) ? $source['ai_methods'] : [];
-$aiLimits = is_array($source['ai_limitations'] ?? null) ? $source['ai_limitations'] : [];
 
 render_header('Source');
 ?>
@@ -157,12 +156,12 @@ render_header('Source');
         </article>
     <article class="card stack source-ai-annotation">
         <h2>AI reading guide</h2>
-        <p id="reading-guide-empty-hint" class="muted <?= $aiSummary !== '' ? 'hidden' : '' ?>">
+        <p id="reading-guide-empty-hint" class="muted <?= $readingGuideHasContent ? 'hidden' : '' ?>">
             No guide yet — click <strong>Reading guide</strong> to generate from this source.
         </p>
-        <p id="reading-guide-active-hint" class="muted <?= $aiSummary === '' ? 'hidden' : '' ?>">
-            Highlight in the guide to add margin notes (separate from
-            <a href="/view.php?id=<?= (int) $source['id'] ?>">notes on extracted text</a>).
+        <p id="reading-guide-active-hint" class="muted <?= !$readingGuideHasContent ? 'hidden' : '' ?>">
+            Highlight anywhere in the guide (including Key claims, Methods, and Limitations at the end) to add margin notes — separate from
+            <a href="/view.php?id=<?= (int) $source['id'] ?>">notes on extracted text</a>.
         </p>
         <div class="actions">
             <button type="button" class="btn btn-load" id="assistant-annotate-btn" data-source-id="<?= (int) $source['id'] ?>">Reading guide</button>
@@ -171,32 +170,6 @@ render_header('Source');
             <button type="button" class="btn btn-copy" id="assistant-similar-btn" data-source-id="<?= (int) $source['id'] ?>">Similar</button>
         </div>
         <div id="assistant-source-output" class="assistant-source-output stack" aria-live="polite"></div>
-        <div id="reading-guide-meta-lists" class="stack">
-            <?php if ($aiClaims !== []): ?>
-                <p><strong>Key claims</strong></p>
-                <ul>
-                    <?php foreach ($aiClaims as $c): ?>
-                        <li><?= h((string) $c) ?></li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php endif; ?>
-            <?php if ($aiMethods !== []): ?>
-                <p><strong>Methods / approach</strong></p>
-                <ul>
-                    <?php foreach ($aiMethods as $m): ?>
-                        <li><?= h((string) $m) ?></li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php endif; ?>
-            <?php if ($aiLimits !== []): ?>
-                <p><strong>Limitations</strong></p>
-                <ul>
-                    <?php foreach ($aiLimits as $l): ?>
-                        <li><?= h((string) $l) ?></li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php endif; ?>
-        </div>
         <div class="viewer-layout reading-guide-viewer">
             <article class="card stack viewer-main reading-guide-viewer-main">
                 <div class="row viewer-toolbar">
@@ -284,6 +257,20 @@ render_header('Source');
         </article>
     <?php endif; ?>
 
+    <article class="card stack source-page-notes">
+        <h2 id="source-notes-heading">Notes</h2>
+        <p class="muted">General notes on this source (saved with <strong>Edit Source</strong> below).</p>
+        <textarea
+            id="source-notes-field"
+            class="source-notes-textarea"
+            name="notes"
+            form="source-form"
+            rows="16"
+            aria-labelledby="source-notes-heading"
+            placeholder="Your own notes, reminders, how you plan to use this source…"
+        ><?= h($source['notes']) ?></textarea>
+    </article>
+
     <form id="source-form" class="card" data-floating-save>
         <h2>Edit Source</h2>
         <div class="grid">
@@ -303,7 +290,6 @@ render_header('Source');
             <label>URL <input name="url" value="<?= h($source['url']) ?>"></label>
             <label>Accessed At <input name="accessed_at" value="<?= h($source['accessed_at'] ?? '') ?>"></label>
         </div>
-        <label>Notes <textarea name="notes" rows="4"><?= h($source['notes']) ?></textarea></label>
         <label>Extracted Text
             <textarea name="body_text" rows="18" placeholder="Paste or replace the extracted text here."><?= h($bodyText) ?></textarea>
         </label>
@@ -331,7 +317,7 @@ render_header('Source');
 </section>
 <script id="reading-guide-viewer-data" type="application/json"><?= json_encode([
     'id' => (int) ($source['id'] ?? 0),
-    'reading_text' => $aiSummaryRaw,
+    'reading_text' => $readingGuideFullMarkdown,
 ], $jsonScriptFlags) ?></script>
 <script id="reading-guide-notes-data" type="application/json"><?= json_encode($readingGuideNotes, $jsonScriptFlags) ?></script>
 <datalist id="project-name-options">

@@ -135,27 +135,37 @@ try {
         $prompt = "The JSON describes a source. The body_text field is an excerpt of extracted full text (if any). Read it as a human would and write a substantive guide.\n"
             . json_encode($forPrompt, JSON_UNESCAPED_UNICODE);
         $system = 'You are writing a "mini reader" for someone engaging with a source: warm, clear, and intellectually serious — like a skilled reading companion, not a sparse abstract. '
-            . 'Return JSON with keys: summary (string), key_claims (array of strings), methods (array of strings), limitations (array of strings). '
-            . 'The summary is the main piece: a long, sectioned reading guide (roughly 500–1200 words if the excerpt is long enough; shorter only when the text is very short or missing). '
-            . 'In summary, use markdown-style section breaks: start optional opening paragraphs, then add lines of the form "## Section title" (newline before ##) to separate major sections. '
-            . 'Include sections that fit the material, e.g. "## What this is", "## The through-line", "## Structure and moves", "## Methods or evidence" (as appropriate to genre), "## How to read it", "## Open questions" — adapt to the actual source; use at least three ## sections when the excerpt is substantial. '
-            . 'Use blank lines between paragraphs. Ground every concrete claim in the excerpt or metadata; if inferring, say so. '
-            . 'key_claims: 5–10 items, each 2–4 full sentences, each capturing one important claim or move with enough context to be useful. '
-            . 'methods: 3–7 items, each 2–4 sentences (genre, data, mode of argument, etc.). limitations: 3–7 items, each 2–3 sentences. '
-            . 'If body_text is empty, write a briefer guide from metadata and title only and say clearly that the full text was not available.';
+            . 'Return JSON with a single key: summary (string). Everything goes in summary; do not return key_claims, methods, or limitations as separate fields. '
+            . 'summary is one long markdown reading guide (roughly 700–1500 words when there is anything substantive to work with; shorter only when the material is very thin). '
+            . 'Structure with "## Section title" headings on their own line, with a blank line above and below. Use at least these three sections, EXACTLY these titles, at the END in this order: "## Key claims", "## Methods / approach", "## Limitations". '
+            . 'Before those three, include 3–6 sections that fit the material — e.g. "## What this is", "## The through-line", "## Structure and moves", "## How to read it", "## Open questions" — adapt to the source. '
+            . 'Inside Key claims / Methods / Limitations sections, use markdown bullets ("- ") with one claim/method/limitation per bullet, 2–4 sentences each. '
+            . 'Key claims: 5–10 bullets capturing important claims, arguments, or thematic moves (for fiction/film/games include thematic claims, formal moves, cultural arguments the work makes). '
+            . 'Methods / approach: 3–7 bullets. Adapt to genre — research methods for scholarship; form and craft (medium, narrative structure, visual/aural strategies, world-building, mode of argument) for film/anime/games; rhetorical strategies and evidence types for essays/journalism. '
+            . 'Limitations: 3–7 bullets. For scholarship: methodological limits; for fiction/film/games: blind spots, ideological tensions, gaps, datedness, scope limits, contested critical reception. '
+            . 'These three sections are REQUIRED and must always have bullets — if the body text is missing, infer from metadata, genre conventions, and known scholarship/criticism, and prefix each inferred bullet with "Inferred:". Use blank lines between paragraphs and between bullets. Ground concrete claims in the excerpt or metadata; if inferring, say so.';
         $response = openai_json_response(
             $system,
             $prompt,
             0.34,
             5000
-        ) ?? ['summary' => '', 'key_claims' => [], 'methods' => [], 'limitations' => []];
-        $source['ai_summary'] = (string) ($response['summary'] ?? '');
-        $source['ai_claims'] = is_array($response['key_claims'] ?? null) ? $response['key_claims'] : [];
-        $source['ai_methods'] = is_array($response['methods'] ?? null) ? $response['methods'] : [];
-        $source['ai_limitations'] = is_array($response['limitations'] ?? null) ? $response['limitations'] : [];
+        ) ?? ['summary' => ''];
+        $summaryText = (string) ($response['summary'] ?? '');
+        // Legacy compatibility: if a model still returns separate arrays, append
+        // them as ## sections so the single-document viewer stays consistent.
+        $legacyClaims = is_array($response['key_claims'] ?? null) ? $response['key_claims'] : [];
+        $legacyMethods = is_array($response['methods'] ?? null) ? $response['methods'] : [];
+        $legacyLimits = is_array($response['limitations'] ?? null) ? $response['limitations'] : [];
+        $summaryText = ensure_reading_guide_sections_in_summary($summaryText, $legacyClaims, $legacyMethods, $legacyLimits);
+        $source['ai_summary'] = $summaryText;
+        // Empty out the separate columns: the guide now lives entirely in ai_summary.
+        $source['ai_claims'] = [];
+        $source['ai_methods'] = [];
+        $source['ai_limitations'] = [];
         save_source($source);
-        assistant_store_run($action, $sourceId, $source['title'], $response);
-        json_response(['ok' => true, 'annotation' => $response, 'source_id' => $sourceId]);
+        $responseForUi = ['summary' => $summaryText];
+        assistant_store_run($action, $sourceId, $source['title'], $responseForUi);
+        json_response(['ok' => true, 'annotation' => $responseForUi, 'source_id' => $sourceId]);
     }
 
     if ($action === 'reformat_body_text') {

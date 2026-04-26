@@ -13,6 +13,25 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $payload = json_input();
 $action = trim((string) ($payload['action'] ?? 'create'));
 
+if ($action === 'list') {
+    $sourceId = (int) ($payload['source_id'] ?? 0);
+    if ($sourceId <= 0) {
+        json_response(['error' => 'Valid source_id is required'], 422);
+    }
+    $scope = trim((string) ($payload['note_scope'] ?? 'body'));
+    if (!in_array($scope, ['body', 'reading_guide'], true)) {
+        json_response(['error' => 'Invalid note_scope'], 422);
+    }
+    $row = get_source($sourceId);
+    if (!is_array($row)) {
+        json_response(['error' => 'Source not found'], 404);
+    }
+    json_response([
+        'ok' => true,
+        'notes' => list_source_notes($sourceId, $scope),
+    ]);
+}
+
 if ($action === 'delete') {
     $noteId = (int) ($payload['note_id'] ?? 0);
     if ($noteId <= 0) {
