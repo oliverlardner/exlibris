@@ -222,6 +222,25 @@ function source_markdown_dir(): string
     return $dir;
 }
 
+/**
+ * Per-source media bucket — used by the TeX-archive importer to stash
+ * referenced images that the viewer renders inline (and the media endpoint
+ * streams). One directory per source id keeps cleanup trivial.
+ */
+function source_media_dir(int $sourceId): string
+{
+    $base = data_dir() . '/source-media';
+    if (!is_dir($base)) {
+        mkdir($base, 0775, true);
+    }
+    $dir = $base . '/' . $sourceId;
+    if (!is_dir($dir)) {
+        mkdir($dir, 0775, true);
+    }
+
+    return $dir;
+}
+
 function source_markdown_path(int $id): string
 {
     return source_markdown_dir() . '/source-' . $id . '.md';
@@ -684,6 +703,18 @@ function delete_source(int $id): bool
     $mdPath = source_markdown_path($id);
     if (file_exists($mdPath)) {
         unlink($mdPath);
+    }
+
+    // Per-source media bucket also dies with the row so figures from a
+    // previous TeX import don't haunt a recycled source id.
+    $mediaBase = data_dir() . '/source-media/' . $id;
+    if (is_dir($mediaBase)) {
+        foreach ((array) glob($mediaBase . '/*') as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
+        @rmdir($mediaBase);
     }
 
     return $stmt->rowCount() > 0;

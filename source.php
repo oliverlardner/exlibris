@@ -234,6 +234,24 @@ render_header('Source');
         </article>
     <?php endif; ?>
 
+    <article class="card stack" data-tex-source-target="<?= (int) $source['id'] ?>">
+        <h2>TeX source</h2>
+        <p class="muted">Drop a TeX-source archive (<code>.zip</code>, <code>.tar.gz</code> / <code>.tgz</code>, <code>.tar</code>, or <code>.tar.bz2</code> — e.g. arXiv "Download source") anywhere on this page, or pick one below, to replace this source's extracted text with the article's TeX-rendered prose. Highlights and notes work on the loaded text exactly as they do on any extracted body.</p>
+        <?php if (str_starts_with((string) ($source['body_source'] ?? ''), 'tex_')): ?>
+            <p class="muted">Current body was loaded from a TeX archive (<?= h((string) $source['body_source']) ?>)<?php if ((string) ($source['body_fetched_at'] ?? '') !== ''): ?> on <?= h((string) $source['body_fetched_at']) ?><?php endif; ?>.</p>
+        <?php endif; ?>
+        <div class="actions">
+            <button type="button" class="btn btn-load" id="tex-upload-btn">Choose archive...</button>
+            <input
+                type="file"
+                id="tex-upload-input"
+                accept=".zip,.tar,.gz,.tgz,.bz2,application/zip,application/x-zip-compressed,application/gzip,application/x-gzip,application/x-tar,application/x-bzip2"
+                hidden
+            >
+            <span class="muted" id="tex-upload-status" aria-live="polite"></span>
+        </div>
+    </article>
+
     <?php if ($bodyText !== '' && $pdfPath === ''): ?>
         <article class="card stack">
             <h2>Extracted Text</h2>
@@ -325,5 +343,8 @@ render_header('Source');
         <option value="<?= h((string) ($project['name'] ?? '')) ?>"></option>
     <?php endforeach; ?>
 </datalist>
+<div id="tex-dropzone" class="global-dropzone hidden" aria-hidden="true">
+    <div class="global-dropzone-inner">Drop `.zip` / `.tar.gz` TeX source to load it into this source's body text</div>
+</div>
 <?php
 render_footer();

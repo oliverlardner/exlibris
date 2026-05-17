@@ -1013,6 +1013,158 @@
     });
   }
 
+  function dragContainsFiles(dataTransfer) {
+    if (!dataTransfer) return false;
+    const types = dataTransfer.types || [];
+    if (typeof types.includes === "function") return types.includes("Files");
+    for (let i = 0; i < types.length; i += 1) {
+      if (types[i] === "Files") return true;
+    }
+    return false;
+  }
+
+  function looksLikeTexArchive(file) {
+    if (!file) return false;
+    const name = String(file.name || "").toLowerCase();
+    const type = String(file.type || "").toLowerCase();
+    const extOk =
+      name.endsWith(".zip") ||
+      name.endsWith(".tar") ||
+      name.endsWith(".tar.gz") ||
+      name.endsWith(".tgz") ||
+      name.endsWith(".tar.bz2") ||
+      name.endsWith(".tbz") ||
+      name.endsWith(".tbz2") ||
+      name.endsWith(".gz") ||
+      name.endsWith(".bz2");
+    const typeOk = [
+      "application/zip",
+      "application/x-zip-compressed",
+      "multipart/x-zip",
+      "application/gzip",
+      "application/x-gzip",
+      "application/x-tar",
+      "application/x-bzip2",
+      "application/x-compressed-tar",
+    ].includes(type);
+    return extOk || typeOk;
+  }
+
+  async function uploadTexZip(sourceId, file, statusEl) {
+    const token = adminToken();
+    if (!token) {
+      const msg = "Admin token missing in this browser. Reload after EXLIBRIS_ADMIN_TOKEN is configured.";
+      if (statusEl) {
+        statusEl.textContent = msg;
+        statusEl.classList.add("error");
+      }
+      setStatus(msg, true);
+      return;
+    }
+
+    // Existing notes are anchored to character offsets in the current body
+    // text. Replacing the body via a TeX zip will almost certainly shift
+    // those anchors, so warn before clobbering anything irreversible.
+    const noteCountEl = qs("#viewer-note-count") || qs("#reading-guide-note-count");
+    const existingNoteCount = noteCountEl ? Number(noteCountEl.textContent || "0") : 0;
+    if (existingNoteCount > 0) {
+      const ok = window.confirm(
+        `This source already has ${existingNoteCount} highlight/note(s) anchored to the current text. ` +
+          "Loading TeX source will replace the body and may shift those anchors. Continue?"
+      );
+      if (!ok) return;
+    }
+
+    if (statusEl) {
+      statusEl.classList.remove("error");
+      statusEl.textContent = `Uploading ${file.name}...`;
+    }
+    setStatus(`Uploading ${file.name}...`);
+
+    try {
+      const fd = new FormData();
+      fd.append("source_id", String(sourceId));
+      fd.append("tex_archive", file);
+      const response = await fetch(endpoint("/api/tex.php"), {
+        method: "POST",
+        headers: { "X-Admin-Token": token },
+        body: fd,
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {}
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed (${response.status})`);
+      }
+      const chars = Number(data?.chars || 0);
+      const summary = String(data?.change_summary || "").trim();
+      const message = summary
+        ? `Loaded TeX source (${chars.toLocaleString()} chars). ${summary}`
+        : `Loaded TeX source (${chars.toLocaleString()} chars).`;
+      if (statusEl) statusEl.textContent = message;
+      setStatus(message);
+      window.setTimeout(() => location.reload(), 600);
+    } catch (error) {
+      const message = error?.message || "TeX upload failed.";
+      if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.classList.add("error");
+      }
+      setStatus(message, true);
+    }
+  }
+
+  function wireTexZipDrop() {
+    const target = qs("[data-tex-source-target]");
+    if (!target) return;
+    const sourceId = Number(target.getAttribute("data-tex-source-target") || 0);
+    if (!sourceId) return;
+
+    const overlay = qs("#tex-dropzone");
+    const fileInput = qs("#tex-upload-input");
+    const fileBtn = qs("#tex-upload-btn");
+    const statusEl = qs("#tex-upload-status");
+
+    const setOverlayActive = (active) => {
+      if (overlay) overlay.classList.toggle("hidden", !active);
+    };
+
+    window.addEventListener("dragover", (e) => {
+      if (!dragContainsFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      setOverlayActive(true);
+    });
+    window.addEventListener("dragleave", (e) => {
+      // dragleave fires constantly as the cursor moves between child elements;
+      // relatedTarget === null is the cleanest signal that the cursor left
+      // the window entirely.
+      if (e.relatedTarget === null) setOverlayActive(false);
+    });
+    window.addEventListener("drop", async (e) => {
+      if (!dragContainsFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      setOverlayActive(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!looksLikeTexArchive(file)) {
+        setStatus(`Expected a .zip / .tar.gz TeX source archive (got ${file.name || "file"}).`, true);
+        return;
+      }
+      await uploadTexZip(sourceId, file, statusEl);
+    });
+
+    if (fileBtn && fileInput) {
+      fileBtn.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        await uploadTexZip(sourceId, file, statusEl);
+        fileInput.value = "";
+      });
+    }
+  }
+
   function wireSearchAndCards() {
     const input = qs("#search-input");
     const collectionFilter = qs("#collection-filter");
@@ -1351,12 +1503,21 @@
     return segments.map((segment) => String(segment.text || "")).join("");
   }
 
+  // Accept absolute https:// URLs and same-origin relative URLs starting
+  // with `/`. The latter is how the TeX archive importer references staged
+  // figures (e.g. `/api/media.php?id=42&file=fig.png`).
+  const VIEWER_URL_PATTERN = /(?:https?:\/\/[^\s)]+|\/[^\s)]+)/;
+
   function parseInlineMarkdownViewer(text, classes = [], href = "") {
     const value = String(text || "");
     if (!value) return [];
 
+    const urlSrc = VIEWER_URL_PATTERN.source;
     const candidates = [
-      { type: "link", match: /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/.exec(value) },
+      // Image syntax MUST be tried before link syntax — `![alt](url)`
+      // starts with `!` but otherwise looks like `[alt](url)`.
+      { type: "image", match: new RegExp(`!\\[([^\\]]*)\\]\\((${urlSrc})\\)`).exec(value) },
+      { type: "link", match: new RegExp(`\\[([^\\]]+)\\]\\((${urlSrc})\\)`).exec(value) },
       { type: "code", match: /`([^`]+)`/.exec(value) },
       { type: "strong", match: /\*\*([^\n]+?)\*\*/.exec(value) },
     ].filter((candidate) => candidate.match);
@@ -1375,7 +1536,17 @@
       out.push({ text: before, classes: classes.slice(), href });
     }
 
-    if (first.type === "link") {
+    if (first.type === "image") {
+      // text="" so this segment contributes nothing to the plain-text
+      // offset model — highlight/notes stay anchored to surrounding prose.
+      out.push({
+        text: "",
+        classes: classes.slice(),
+        href: "",
+        imageSrc: match[2],
+        imageAlt: match[1],
+      });
+    } else if (first.type === "link") {
       out.push(...parseInlineMarkdownViewer(match[1], classes.slice(), match[2]));
     } else if (first.type === "code") {
       out.push({ text: match[1], classes: classes.concat("viewer-md-inline-code"), href });
@@ -1402,12 +1573,14 @@
 
   function hasViewerMarkdownSyntax(text) {
     const value = String(text || "");
+    const urlSrc = VIEWER_URL_PATTERN.source;
     return /(^|\n)\s{0,3}(#{1,6})\s+\S/.test(value)
       || /(^|\n)\s*[-*+]\s+\S/.test(value)
       || /(^|\n)\s*\d+\.\s+\S/.test(value)
       || /(^|\n)\s{0,3}>\s*\S/.test(value)
       || /(^|\n)\s*```/.test(value)
-      || /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/.test(value)
+      || new RegExp(`!\\[([^\\]]*)\\]\\((${urlSrc})\\)`).test(value)
+      || new RegExp(`\\[([^\\]]+)\\]\\((${urlSrc})\\)`).test(value)
       || /\*\*([^\n]+?)\*\*/.test(value)
       || /`([^`]+)`/.test(value);
   }
@@ -1536,7 +1709,43 @@
     container.appendChild(document.createTextNode(text));
   }
 
+  function appendViewerImageSegment(container, segment) {
+    const src = String(segment?.imageSrc || "").trim();
+    if (!src) return;
+    const alt = String(segment?.imageAlt || "").trim();
+    const figure = document.createElement("span");
+    figure.className = "viewer-md-figure";
+    figure.setAttribute("data-non-text", "1");
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = alt;
+    img.loading = "lazy";
+    img.className = "viewer-md-image";
+    // Clicking the figure opens the file in a new tab — useful for non-
+    // displayable formats (PDF, EPS) that flow through this same code path
+    // as `[Figure: …](url)` links rather than `![…](url)` images.
+    const link = document.createElement("a");
+    link.href = src;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.appendChild(img);
+    figure.appendChild(link);
+    if (alt) {
+      const caption = document.createElement("span");
+      caption.className = "viewer-md-figure-alt";
+      caption.textContent = alt;
+      figure.appendChild(caption);
+    }
+    container.appendChild(figure);
+  }
+
   function appendViewerSegmentWithHighlights(container, segment, startOffset, notes, activeNoteId, onActivateNote) {
+    if (segment?.imageSrc) {
+      // Image segments contribute 0 chars to the offset model, so they
+      // can never overlap a highlight range — just render and return.
+      appendViewerImageSegment(container, segment);
+      return;
+    }
     const segmentText = String(segment?.text || "");
     if (!segmentText) return;
 
@@ -3976,6 +4185,7 @@
     if (sourceForm) sourceForm.addEventListener("submit", saveSource);
 
     wireDropInput();
+    wireTexZipDrop();
     wireSearchAndCards();
     wireAllProjectTokenFields();
     wireIndexSourceCollectionForms();

@@ -793,6 +793,39 @@ a.badge-collection:hover {
   color: var(--success);
 }
 
+.viewer-md-figure {
+  display: block;
+  margin: 0.6rem 0;
+  text-align: center;
+}
+
+.viewer-md-figure a {
+  display: inline-block;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 75%);
+  padding: 0.25rem;
+  background: color-mix(in srgb, var(--surface), white 2%);
+}
+
+.viewer-md-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  /* Keep selection from "swallowing" the image during a drag-highlight —
+     the image contributes 0 chars to plainText so users should never see
+     it inside a quote excerpt. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.viewer-md-figure-alt {
+  display: block;
+  font-size: 0.85em;
+  color: var(--muted);
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
 .viewer-highlight {
   background: color-mix(in srgb, var(--copy), transparent 55%);
   color: inherit;
@@ -1063,71 +1096,6 @@ ul, ol {
   background: color-mix(in srgb, var(--success), transparent 85%);
 }
 
-@media (max-width: 760px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
-  .header-inner {
-    flex-wrap: wrap;
-    padding: 0.45rem 0;
-  }
-
-  .nav {
-    width: 100%;
-  }
-
-  .header-citation-control {
-    order: 2;
-  }
-
-  .header-projects-control {
-    order: 3;
-    width: 100%;
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .header-projects-editor,
-  .header-project-chips,
-  #current-project-input {
-    width: 100%;
-    max-width: none;
-  }
-
-  .row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .viewer-reading-stage {
-    grid-template-columns: 1fr;
-  }
-
-  .viewer-controls {
-    width: 100%;
-  }
-
-  .milestones-controls {
-    align-items: stretch;
-  }
-
-  .milestones-controls label,
-  .milestones-controls input,
-  .milestones-controls select,
-  .milestones-controls button {
-    width: 100%;
-    max-width: none;
-  }
-
-  .viewer-note-card,
-  .viewer-selection-card {
-    position: static;
-    width: 100%;
-    margin-top: 0.8rem;
-  }
-}
-
 .tickets-date-row {
   display: flex;
   flex-wrap: wrap;
@@ -1215,4 +1183,69 @@ ul, ol {
 
 .tickets-list {
   gap: 0.65rem;
+}
+
+@media (max-width: 760px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .header-inner {
+    flex-wrap: wrap;
+    padding: 0.45rem 0;
+  }
+
+  .nav {
+    width: 100%;
+  }
+
+  .header-citation-control {
+    order: 2;
+  }
+
+  .header-projects-control {
+    order: 3;
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .header-projects-editor,
+  .header-project-chips,
+  #current-project-input {
+    width: 100%;
+    max-width: none;
+  }
+
+  .row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .viewer-reading-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-controls {
+    width: 100%;
+  }
+
+  .milestones-controls {
+    align-items: stretch;
+  }
+
+  .milestones-controls label,
+  .milestones-controls input,
+  .milestones-controls select,
+  .milestones-controls button {
+    width: 100%;
+    max-width: none;
+  }
+
+  .viewer-note-card,
+  .viewer-selection-card {
+    position: static;
+    width: 100%;
+    margin-top: 0.8rem;
+  }
 }

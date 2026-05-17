@@ -165,5 +165,9 @@ render_header('View Source');
         <option value="<?= h((string) ($project['name'] ?? '')) ?>"></option>
     <?php endforeach; ?>
 </datalist>
+<div data-tex-source-target="<?= (int) $source['id'] ?>" hidden></div>
+<div id="tex-dropzone" class="global-dropzone hidden" aria-hidden="true">
+    <div class="global-dropzone-inner">Drop `.zip` / `.tar.gz` TeX source to replace this source's body text (highlights/notes will need re-anchoring)</div>
+</div>
 <?php
 render_footer();
