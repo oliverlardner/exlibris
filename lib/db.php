@@ -174,6 +174,29 @@ function ensure_schema(PDO $pdo): void
     );
     $pdo->exec('ALTER TABLE source_notes ADD COLUMN IF NOT EXISTS note_scope TEXT NOT NULL DEFAULT \'body\'');
 
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS tickets (
+            id BIGSERIAL PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT \'\',
+            description TEXT NOT NULL DEFAULT \'\',
+            start_date DATE NULL,
+            end_date DATE NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS ticket_items (
+            id BIGSERIAL PRIMARY KEY,
+            ticket_id BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+            label TEXT NOT NULL DEFAULT \'\',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            done BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )'
+    );
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_ticket_items_ticket ON ticket_items (ticket_id, sort_order, id)');
+
     $ready = true;
 }
 

@@ -3357,6 +3357,334 @@
     });
   }
 
+  function wireTickets() {
+    const root = qs("#tickets-root");
+    if (!root) return;
+
+    const titleInput = qs("#ticket-title");
+    const descInput = qs("#ticket-description");
+    const startInput = qs("#ticket-start");
+    const endInput = qs("#ticket-end");
+    const suggestBtn = qs("#ticket-suggest-btn");
+    const saveBtn = qs("#ticket-save-btn");
+    const formStatus = qs("#ticket-form-status");
+    const listStatus = qs("#tickets-list-status");
+    const listEl = qs("#tickets-list");
+    const suggestedWrap = qs("#ticket-suggested-wrap");
+    const suggestedList = qs("#ticket-suggested-list");
+
+    let pendingSubtasks = [];
+
+    function setFormStatus(msg) {
+      if (formStatus) formStatus.textContent = msg || "";
+    }
+    function setListStatus(msg) {
+      if (listStatus) listStatus.textContent = msg || "";
+    }
+
+    function formatDateOnly(s) {
+      if (!s) return "—";
+      const t = String(s).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+        const [y, m, d] = t.split("-").map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString();
+      }
+      const dt = new Date(t);
+      return Number.isNaN(dt.getTime()) ? t : dt.toLocaleDateString();
+    }
+
+    function formatDateTime(s) {
+      if (!s) return "—";
+      const dt = new Date(s);
+      return Number.isNaN(dt.getTime()) ? String(s) : dt.toLocaleString();
+    }
+
+    function renderPendingSubtasks() {
+      if (!suggestedList || !suggestedWrap) return;
+      suggestedList.innerHTML = "";
+      if (pendingSubtasks.length === 0) {
+        suggestedWrap.classList.add("hidden");
+        return;
+      }
+      suggestedWrap.classList.remove("hidden");
+      pendingSubtasks.forEach((text, idx) => {
+        const li = document.createElement("li");
+        const span = document.createElement("span");
+        span.textContent = text;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-secondary tickets-suggested-remove";
+        btn.textContent = "Remove";
+        btn.addEventListener("click", () => {
+          pendingSubtasks = pendingSubtasks.filter((_, i) => i !== idx);
+          renderPendingSubtasks();
+        });
+        li.appendChild(span);
+        li.appendChild(btn);
+        suggestedList.appendChild(li);
+      });
+    }
+
+    function renderTickets(tickets) {
+      if (!listEl) return;
+      listEl.innerHTML = "";
+      if (!Array.isArray(tickets) || tickets.length === 0) {
+        const p = document.createElement("p");
+        p.className = "muted";
+        p.textContent = "No tickets yet.";
+        listEl.appendChild(p);
+        return;
+      }
+
+      tickets.forEach((ticket) => {
+        const card = document.createElement("article");
+        card.className = "card stack ticket-card";
+        card.dataset.ticketId = String(ticket.id);
+
+        const headerRow = document.createElement("div");
+        headerRow.className = "row";
+        const h3 = document.createElement("h3");
+        h3.className = "ticket-card-title";
+        h3.textContent = ticket.title || "Untitled";
+        headerRow.appendChild(h3);
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "btn btn-danger";
+        delBtn.textContent = "Delete";
+        delBtn.addEventListener("click", async () => {
+          if (!window.confirm("Delete this ticket and its sub-tasks?")) return;
+          try {
+            delBtn.disabled = true;
+            await postJson("/api/tickets.php", { op: "delete", id: ticket.id });
+            await loadTickets();
+            setListStatus("Deleted.");
+          } catch (e) {
+            setListStatus(e.message || "Could not delete.");
+          } finally {
+            delBtn.disabled = false;
+          }
+        });
+        headerRow.appendChild(delBtn);
+        card.appendChild(headerRow);
+
+        const meta = document.createElement("p");
+        meta.className = "muted ticket-meta";
+        meta.textContent = `Created ${formatDateTime(ticket.created_at)} · Start ${formatDateOnly(
+          ticket.start_date
+        )} · End ${formatDateOnly(ticket.end_date)}`;
+        card.appendChild(meta);
+
+        if (ticket.description) {
+          const desc = document.createElement("p");
+          desc.className = "ticket-description";
+          desc.textContent = ticket.description;
+          card.appendChild(desc);
+        }
+
+        const itemsWrap = document.createElement("div");
+        itemsWrap.className = "stack ticket-items-wrap";
+        const items = Array.isArray(ticket.items) ? ticket.items : [];
+        if (items.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No sub-tasks.";
+          itemsWrap.appendChild(empty);
+        } else {
+          items.forEach((item) => {
+            const row = document.createElement("label");
+            row.className = "ticket-item-row";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = !!item.done;
+            cb.addEventListener("change", async () => {
+              try {
+                cb.disabled = true;
+                await postJson("/api/tickets.php", {
+                  op: "patch_item",
+                  item_id: item.id,
+                  done: cb.checked,
+                });
+                await loadTickets();
+              } catch (e) {
+                cb.checked = !cb.checked;
+                setListStatus(e.message || "Could not update item.");
+              } finally {
+                cb.disabled = false;
+              }
+            });
+            const span = document.createElement("span");
+            span.textContent = item.label || "";
+            if (item.done) span.classList.add("ticket-item-done");
+            row.appendChild(cb);
+            row.appendChild(span);
+            itemsWrap.appendChild(row);
+          });
+        }
+        card.appendChild(itemsWrap);
+
+        const details = document.createElement("details");
+        details.className = "ticket-edit-details";
+        const summ = document.createElement("summary");
+        summ.textContent = "Edit ticket";
+        details.appendChild(summ);
+
+        const editStack = document.createElement("div");
+        editStack.className = "stack ticket-edit-form";
+
+        const tLab = document.createElement("label");
+        tLab.htmlFor = `ticket-edit-title-${ticket.id}`;
+        tLab.textContent = "Title";
+        const tIn = document.createElement("input");
+        tIn.id = `ticket-edit-title-${ticket.id}`;
+        tIn.type = "text";
+        tIn.value = ticket.title || "";
+        editStack.appendChild(tLab);
+        editStack.appendChild(tIn);
+
+        const dLab = document.createElement("label");
+        dLab.htmlFor = `ticket-edit-desc-${ticket.id}`;
+        dLab.textContent = "Description";
+        const dIn = document.createElement("textarea");
+        dIn.id = `ticket-edit-desc-${ticket.id}`;
+        dIn.rows = 3;
+        dIn.value = ticket.description || "";
+        editStack.appendChild(dLab);
+        editStack.appendChild(dIn);
+
+        const dateRow = document.createElement("div");
+        dateRow.className = "tickets-date-row";
+        const startWrap = document.createElement("div");
+        startWrap.className = "stack";
+        const sL = document.createElement("label");
+        sL.htmlFor = `ticket-edit-start-${ticket.id}`;
+        sL.textContent = "Start date";
+        const sI = document.createElement("input");
+        sI.type = "date";
+        sI.id = `ticket-edit-start-${ticket.id}`;
+        sI.value = ticket.start_date || "";
+        startWrap.appendChild(sL);
+        startWrap.appendChild(sI);
+        const endWrap = document.createElement("div");
+        endWrap.className = "stack";
+        const eL = document.createElement("label");
+        eL.htmlFor = `ticket-edit-end-${ticket.id}`;
+        eL.textContent = "End date";
+        const eI = document.createElement("input");
+        eI.type = "date";
+        eI.id = `ticket-edit-end-${ticket.id}`;
+        eI.value = ticket.end_date || "";
+        endWrap.appendChild(eL);
+        endWrap.appendChild(eI);
+        dateRow.appendChild(startWrap);
+        dateRow.appendChild(endWrap);
+        editStack.appendChild(dateRow);
+
+        const updBtn = document.createElement("button");
+        updBtn.type = "button";
+        updBtn.className = "btn btn-secondary";
+        updBtn.textContent = "Update ticket";
+        updBtn.addEventListener("click", async () => {
+          try {
+            updBtn.disabled = true;
+            await postJson("/api/tickets.php", {
+              op: "update",
+              id: ticket.id,
+              title: tIn.value,
+              description: dIn.value,
+              start_date: sI.value || "",
+              end_date: eI.value || "",
+            });
+            details.open = false;
+            await loadTickets();
+            setListStatus("Updated.");
+          } catch (e) {
+            setListStatus(e.message || "Could not update.");
+          } finally {
+            updBtn.disabled = false;
+          }
+        });
+        editStack.appendChild(updBtn);
+        details.appendChild(editStack);
+        card.appendChild(details);
+
+        listEl.appendChild(card);
+      });
+    }
+
+    async function loadTickets() {
+      try {
+        setListStatus("Loading…");
+        const res = await fetch(endpoint("/api/tickets.php"));
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "Failed to load tickets");
+        }
+        renderTickets(data.tickets || []);
+        setListStatus("");
+      } catch (e) {
+        setListStatus(e.message || "Could not load tickets.");
+      }
+    }
+
+    if (!suggestBtn || !saveBtn) {
+      return;
+    }
+
+    suggestBtn.addEventListener("click", async () => {
+      try {
+        suggestBtn.disabled = true;
+        setFormStatus("");
+        globalAiRequestStart();
+        const data = await postJson("/api/tickets.php", {
+          op: "suggest",
+          title: titleInput?.value || "",
+          description: descInput?.value || "",
+        });
+        pendingSubtasks = Array.isArray(data.items) ? data.items.slice() : [];
+        renderPendingSubtasks();
+        setFormStatus(
+          pendingSubtasks.length
+            ? `Suggested ${pendingSubtasks.length} sub-tasks. Remove any you do not want, then save.`
+            : "No sub-tasks returned."
+        );
+      } catch (e) {
+        setFormStatus(e.message || "Suggest failed.");
+      } finally {
+        globalAiRequestEnd();
+        suggestBtn.disabled = false;
+      }
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      try {
+        saveBtn.disabled = true;
+        setFormStatus("");
+        await postJson("/api/tickets.php", {
+          op: "create",
+          title: titleInput?.value || "",
+          description: descInput?.value || "",
+          start_date: startInput?.value || "",
+          end_date: endInput?.value || "",
+          items: pendingSubtasks,
+        });
+        if (titleInput) titleInput.value = "";
+        if (descInput) descInput.value = "";
+        if (startInput) startInput.value = "";
+        if (endInput) endInput.value = "";
+        pendingSubtasks = [];
+        renderPendingSubtasks();
+        setFormStatus("Ticket saved.");
+        await loadTickets();
+      } catch (e) {
+        setFormStatus(e.message || "Could not save.");
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    loadTickets();
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     const processBtn = qs("#process-input");
     if (processBtn) processBtn.addEventListener("click", processDumpInput);
@@ -3380,5 +3708,6 @@
     wireAssistantPanels();
     wireReaderPanel();
     wireFloatingSaveBar();
+    wireTickets();
   });
 })();

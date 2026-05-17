@@ -1008,3 +1008,92 @@ ul, ol {
     margin-top: 0.8rem;
   }
 }
+
+.tickets-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: flex-end;
+}
+
+.tickets-subheading {
+  font-size: 1em;
+  font-weight: 400;
+  margin: 0.25rem 0 0;
+}
+
+.tickets-hint {
+  margin: 0;
+  font-size: 0.92em;
+}
+
+.tickets-suggested-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tickets-suggested-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 55%);
+}
+
+.tickets-suggested-remove::before,
+.tickets-suggested-remove::after {
+  content: "";
+}
+
+.ticket-card-title {
+  font-size: 1.05rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.ticket-meta {
+  margin: 0;
+  font-size: 0.92em;
+}
+
+.ticket-description {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.ticket-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.ticket-item-row input {
+  margin-top: 0.2rem;
+}
+
+.ticket-item-done {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.ticket-edit-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  margin-top: 0.35rem;
+}
+
+.ticket-edit-form {
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid color-mix(in srgb, var(--accent), transparent 65%);
+}
+
+.tickets-list {
+  gap: 0.65rem;
+}
