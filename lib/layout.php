@@ -32,6 +32,7 @@ function render_header(string $title): void
                 <details class="nav-more">
                     <summary class="nav-more-summary">[ more... ]</summary>
                     <div class="nav-more-panel">
+                        <a href="/milestones.php">Milestones</a>
                         <a href="/tickets.php">Tickets</a>
                         <a href="/cleanup.php">Cleanup</a>
                         <a href="/digest.php">Digest</a>

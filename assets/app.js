@@ -3357,6 +3357,290 @@
     });
   }
 
+  function wireMilestones() {
+    const root = qs("#milestones-root");
+    if (!root) return;
+
+    const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const gridHead = qs("#milestones-grid-head");
+    const gridBody = qs("#milestones-grid-body");
+    const startInput = qs("#milestones-window-start");
+    const monthsSelect = qs("#milestones-window-months");
+    const saveBtn = qs("#milestones-save-btn");
+    const status = qs("#milestones-status");
+    const todayNote = qs("#milestones-today-note");
+    if (!gridHead || !gridBody || !startInput || !monthsSelect || !saveBtn || !status || !todayNote) return;
+
+    function isValidMonth(value) {
+      return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ""));
+    }
+
+    function monthToDate(value) {
+      if (!isValidMonth(value)) return null;
+      const year = Number(value.slice(0, 4));
+      const monthIndex = Number(value.slice(5, 7)) - 1;
+      return new Date(year, monthIndex, 1);
+    }
+
+    function formatMonthKey(date) {
+      const year = date.getFullYear();
+      const month = `${date.getMonth() + 1}`.padStart(2, "0");
+      return `${year}-${month}`;
+    }
+
+    function monthAdd(baseMonth, delta) {
+      const baseDate = monthToDate(baseMonth);
+      if (!baseDate) return baseMonth;
+      return formatMonthKey(new Date(baseDate.getFullYear(), baseDate.getMonth() + delta, 1));
+    }
+
+    function clampMonths(value) {
+      let n = Number(value || 36);
+      if (!Number.isFinite(n)) n = 36;
+      n = Math.round(n);
+      if (n < 12) return 12;
+      if (n > 60) return 60;
+      return n;
+    }
+
+    function normalizeRows(rows) {
+      if (!Array.isArray(rows)) return [];
+      const out = [];
+      const seen = new Set();
+      rows.forEach((row) => {
+        if (!row || typeof row !== "object") return;
+        const id = String(row.id || "").trim();
+        const section = String(row.section || "").trim();
+        const label = String(row.label || "").trim();
+        if (!id || !section || !label || seen.has(id)) return;
+        seen.add(id);
+        const entry = { id, section, label };
+        const tooltip = String(row.tooltip || "").trim();
+        if (tooltip) entry.tooltip = tooltip;
+        out.push(entry);
+      });
+      return out;
+    }
+
+    function normalizeFilled(filled, rows) {
+      const allowed = new Set(rows.map((row) => row.id));
+      const out = {};
+      if (!filled || typeof filled !== "object") return out;
+      Object.entries(filled).forEach(([rowId, months]) => {
+        if (!allowed.has(rowId) || !Array.isArray(months)) return;
+        const deduped = Array.from(new Set(months.map((value) => String(value || "")).filter(isValidMonth))).sort();
+        if (deduped.length) out[rowId] = deduped;
+      });
+      return out;
+    }
+
+    function normalizeDocument(raw) {
+      const rows = normalizeRows(raw?.rows);
+      const now = new Date();
+      const fallbackStart = `${now.getFullYear()}-01`;
+      const windowStart = isValidMonth(raw?.windowStart) ? raw.windowStart : fallbackStart;
+      const windowMonths = clampMonths(raw?.windowMonths);
+      const filled = normalizeFilled(raw?.filled, rows);
+      return {
+        schemaVersion: 1,
+        windowStart,
+        windowMonths,
+        rows,
+        filled,
+      };
+    }
+
+    function monthsInWindow(windowStart, count) {
+      return Array.from({ length: count }, (_, index) => monthAdd(windowStart, index));
+    }
+
+    function renderHead(months, todayMonth) {
+      const years = [];
+      months.forEach((month) => {
+        const year = Number(month.slice(0, 4));
+        const last = years[years.length - 1];
+        if (last && last.year === year) {
+          last.colspan += 1;
+        } else {
+          years.push({ year, colspan: 1 });
+        }
+      });
+
+      const yearCells = years
+        .map(({ year, colspan }) => `<th class="milestones-year-head" colspan="${colspan}">${year}</th>`)
+        .join("");
+      const monthCells = months
+        .map((month) => {
+          const monthIndex = Number(month.slice(5, 7)) - 1;
+          const todayClass = month === todayMonth ? " milestones-is-today" : "";
+          return `<th class="milestones-month-head${todayClass}" data-month="${month}">${MONTH_NAMES[monthIndex] || month}</th>`;
+        })
+        .join("");
+
+      gridHead.innerHTML = `
+        <tr>
+          <th class="milestones-label-head" rowspan="2">Notes</th>
+          ${yearCells}
+        </tr>
+        <tr>${monthCells}</tr>
+      `;
+    }
+
+    function renderBody(rows, months, filled, todayMonth) {
+      let activeSection = "";
+      const chunks = [];
+
+      rows.forEach((row) => {
+        if (row.section !== activeSection) {
+          activeSection = row.section;
+          chunks.push(
+            `<tr class="milestones-section-row"><th class="milestones-section-head" colspan="${months.length + 1}">${activeSection}</th></tr>`
+          );
+        }
+
+        const rowMonths = new Set(Array.isArray(filled[row.id]) ? filled[row.id] : []);
+        const cells = months
+          .map((month) => {
+            const isOn = rowMonths.has(month);
+            const onClass = isOn ? " is-on" : "";
+            const todayClass = month === todayMonth ? " milestones-is-today" : "";
+            const pressed = isOn ? "true" : "false";
+            return `<td class="milestones-cell${todayClass}">
+              <button type="button" class="milestones-cell-btn${onClass}" data-row-id="${row.id}" data-month="${month}" aria-pressed="${pressed}" aria-label="${row.label} ${month}"></button>
+            </td>`;
+          })
+          .join("");
+
+        const titleAttr = row.tooltip ? ` title="${row.tooltip.replace(/"/g, "&quot;")}"` : "";
+        const labelInner = row.tooltip
+          ? `<span class="milestones-label-tip">${row.label}</span>`
+          : row.label;
+        chunks.push(
+          `<tr class="milestones-data-row">
+            <th class="milestones-label-cell"${titleAttr}>${labelInner}</th>
+            ${cells}
+          </tr>`
+        );
+      });
+
+      gridBody.innerHTML = chunks.join("");
+    }
+
+    function syncControlValues(doc) {
+      startInput.value = doc.windowStart;
+      const monthsValue = String(doc.windowMonths);
+      if (!Array.from(monthsSelect.options).some((option) => option.value === monthsValue)) {
+        const option = document.createElement("option");
+        option.value = monthsValue;
+        option.textContent = monthsValue;
+        monthsSelect.appendChild(option);
+      }
+      monthsSelect.value = monthsValue;
+    }
+
+    function setTodayNote(months, todayMonth) {
+      todayNote.textContent = months.includes(todayMonth) ? `Current month: ${todayMonth}` : "Current month is outside this range.";
+    }
+
+    function setStatus(message) {
+      status.textContent = message;
+    }
+
+    function toggleMonth(doc, rowId, month) {
+      if (!doc.filled[rowId]) doc.filled[rowId] = [];
+      const values = new Set(doc.filled[rowId]);
+      if (values.has(month)) {
+        values.delete(month);
+      } else {
+        values.add(month);
+      }
+      const next = Array.from(values).sort();
+      if (next.length === 0) {
+        delete doc.filled[rowId];
+      } else {
+        doc.filled[rowId] = next;
+      }
+    }
+
+    function payloadForSave(doc) {
+      return {
+        schemaVersion: 1,
+        windowStart: doc.windowStart,
+        windowMonths: doc.windowMonths,
+        rows: doc.rows,
+        filled: doc.filled,
+      };
+    }
+
+    const initial = readJsonScript("milestones-data", {});
+    const doc = normalizeDocument(initial);
+    let isDirty = false;
+
+    function render() {
+      const months = monthsInWindow(doc.windowStart, doc.windowMonths);
+      const now = new Date();
+      const todayMonth = formatMonthKey(new Date(now.getFullYear(), now.getMonth(), 1));
+      syncControlValues(doc);
+      renderHead(months, todayMonth);
+      renderBody(doc.rows, months, doc.filled, todayMonth);
+      setTodayNote(months, todayMonth);
+      if (isDirty) {
+        setStatus("Unsaved changes.");
+      }
+    }
+
+    startInput.addEventListener("change", () => {
+      const next = String(startInput.value || "");
+      if (!isValidMonth(next) || next === doc.windowStart) return;
+      doc.windowStart = next;
+      isDirty = true;
+      render();
+    });
+
+    monthsSelect.addEventListener("change", () => {
+      const next = clampMonths(monthsSelect.value);
+      if (next === doc.windowMonths) return;
+      doc.windowMonths = next;
+      isDirty = true;
+      render();
+    });
+
+    gridBody.addEventListener("click", (event) => {
+      const button = event.target.closest(".milestones-cell-btn");
+      if (!button) return;
+      const rowId = String(button.getAttribute("data-row-id") || "");
+      const month = String(button.getAttribute("data-month") || "");
+      if (!rowId || !isValidMonth(month)) return;
+      toggleMonth(doc, rowId, month);
+      isDirty = true;
+      render();
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      try {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving...";
+        const data = await postJson("/api/milestones.php", payloadForSave(doc));
+        const normalized = normalizeDocument(data);
+        doc.windowStart = normalized.windowStart;
+        doc.windowMonths = normalized.windowMonths;
+        doc.rows = normalized.rows;
+        doc.filled = normalized.filled;
+        isDirty = false;
+        render();
+        setStatus("Saved.");
+      } catch (error) {
+        setStatus(error.message || "Could not save milestones.");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save";
+      }
+    });
+
+    setStatus("Ready.");
+    render();
+  }
+
   function wireTickets() {
     const root = qs("#tickets-root");
     if (!root) return;
@@ -3708,6 +3992,7 @@
     wireAssistantPanels();
     wireReaderPanel();
     wireFloatingSaveBar();
+    wireMilestones();
     wireTickets();
   });
 })();

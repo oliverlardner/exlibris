@@ -956,6 +956,113 @@ ul, ol {
   color: var(--danger);
 }
 
+.milestones-panel {
+  gap: 0.7rem;
+}
+
+.milestones-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.milestones-controls label {
+  min-width: 8.5rem;
+}
+
+.milestones-grid-wrap {
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 55%);
+  background: color-mix(in srgb, var(--surface), transparent 4%);
+}
+
+.milestones-grid {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.milestones-grid th,
+.milestones-grid td {
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 78%);
+  padding: 0;
+  text-align: center;
+}
+
+.milestones-label-head,
+.milestones-label-cell {
+  min-width: 15rem;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: color-mix(in srgb, var(--surface), transparent 2%);
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  white-space: nowrap;
+}
+
+.milestones-label-tip {
+  border-bottom: 1px dotted color-mix(in srgb, var(--muted), transparent 30%);
+  cursor: help;
+}
+
+.milestones-year-head {
+  padding: 0.2rem 0.1rem;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface), transparent 7%);
+}
+
+.milestones-month-head {
+  min-width: 1.8rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  padding: 0.2rem 0.1rem;
+}
+
+.milestones-section-head {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent), transparent 86%);
+}
+
+.milestones-cell {
+  width: 1.8rem;
+  height: 1.5rem;
+}
+
+.milestones-cell-btn {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.milestones-cell-btn:hover {
+  background: color-mix(in srgb, var(--accent), transparent 84%);
+}
+
+.milestones-cell-btn:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent), transparent 20%);
+  outline-offset: -1px;
+}
+
+.milestones-cell-btn.is-on {
+  background: color-mix(in srgb, var(--accent), transparent 28%);
+}
+
+.milestones-is-today {
+  background: color-mix(in srgb, var(--success), transparent 85%);
+}
+
 @media (max-width: 760px) {
   .grid {
     grid-template-columns: 1fr;
@@ -999,6 +1106,18 @@ ul, ol {
 
   .viewer-controls {
     width: 100%;
+  }
+
+  .milestones-controls {
+    align-items: stretch;
+  }
+
+  .milestones-controls label,
+  .milestones-controls input,
+  .milestones-controls select,
+  .milestones-controls button {
+    width: 100%;
+    max-width: none;
   }
 
   .viewer-note-card,

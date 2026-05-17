@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/viewer_markdown_plain.php';
+require_once __DIR__ . '/milestones.php';
 
 function db(): PDO
 {
@@ -305,6 +306,10 @@ function ensure_defaults(): void
     }
     if (setting('zotero_auto_collection_name') === null) {
         set_setting('zotero_auto_collection_name', 'Ex Libris');
+    }
+    if (setting('milestones_timeline') === null) {
+        $encoded = json_encode(milestones_default_document(), JSON_UNESCAPED_UNICODE);
+        set_setting('milestones_timeline', is_string($encoded) ? $encoded : '{}');
     }
 }
 
