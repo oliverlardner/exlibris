@@ -34,6 +34,7 @@ function render_header(string $title): void
                     <div class="nav-more-panel">
                         <a href="/milestones.php">Milestones</a>
                         <a href="/tickets.php">Tickets</a>
+                        <a href="/pomodoro.php">Pomodoro</a>
                         <a href="/cleanup.php">Cleanup</a>
                         <a href="/digest.php">Digest</a>
                         <a href="/styles.php">Styles</a>

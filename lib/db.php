@@ -198,6 +198,23 @@ function ensure_schema(PDO $pdo): void
     );
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_ticket_items_ticket ON ticket_items (ticket_id, sort_order, id)');
 
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+            id BIGSERIAL PRIMARY KEY,
+            task_label TEXT NOT NULL DEFAULT \'\',
+            source_id BIGINT NULL REFERENCES sources(id) ON DELETE SET NULL,
+            type TEXT NOT NULL DEFAULT \'work\',
+            duration_sec INTEGER NOT NULL DEFAULT 1500,
+            completed BOOLEAN NOT NULL DEFAULT FALSE,
+            abandoned BOOLEAN NOT NULL DEFAULT FALSE,
+            notes TEXT NOT NULL DEFAULT \'\',
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ended_at TIMESTAMPTZ NULL
+        )'
+    );
+    $pdo->exec('ALTER TABLE pomodoro_sessions ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT \'\'');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_pomo_started ON pomodoro_sessions (started_at DESC)');
+
     $ready = true;
 }
 
@@ -843,7 +860,13 @@ function create_source_note(array $note): array
         if ($bodyText === '') {
             throw new RuntimeException('Source has no extracted text to annotate.');
         }
-        $documentText = $bodyText;
+        // The browser viewer runs body_text through parseViewerMarkdown and
+        // anchors highlights against that derived plain text (paragraphs
+        // re-flowed, single \n between blocks). Anchoring against raw body
+        // text here would slide every saved offset forward by the amount of
+        // collapsed whitespace, so the rendered highlight lands on a later
+        // sentence than the one the user actually selected.
+        $documentText = viewer_markdown_plain_text($bodyText);
     } else {
         if ($readingGuideTrim === '') {
             throw new RuntimeException('No AI reading guide text to annotate.');

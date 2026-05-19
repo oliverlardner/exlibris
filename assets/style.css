@@ -1,16 +1,16 @@
 :root {
-  --bg: #aeb6c3;
-  --surface: #c3cad4;
-  --text: #151515;
-  --muted: #4a5463;
+  --bg: #f5f6fa;
+  --surface: #f5f6fa;
+  --text: #0c1826;
+  --muted: #3c5470;
   --border: transparent;
-  --accent: #1b6b4d;
-  --accent-contrast: #c3cad4;
-  --danger: #a7377d;
-  --success: #1b6b4d;
-  --copy: #9b631f;
-  --load: #1b6b4d;
-  --delete: #a7377d;
+  --accent: #0d62b0;
+  --accent-contrast: #e8f0fc;
+  --danger: #be1840;
+  --success: #0d62b0;
+  --copy: #b05400;
+  --load: #0d62b0;
+  --delete: #be1840;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -31,18 +31,18 @@
 }
 
 html[data-theme-mode="light"] {
-  --bg: #aeb6c3;
-  --surface: #c3cad4;
-  --text: #151515;
-  --muted: #4a5463;
+  --bg: #f5f6fa;
+  --surface: #f5f6fa;
+  --text: #0c1826;
+  --muted: #3c5470;
   --border: transparent;
-  --accent: #1b6b4d;
-  --accent-contrast: #c3cad4;
-  --danger: #a7377d;
-  --success: #1b6b4d;
-  --copy: #9b631f;
-  --load: #1b6b4d;
-  --delete: #a7377d;
+  --accent: #0d62b0;
+  --accent-contrast: #e8f0fc;
+  --danger: #be1840;
+  --success: #0d62b0;
+  --copy: #b05400;
+  --load: #0d62b0;
+  --delete: #be1840;
 }
 
 html[data-theme-mode="dark"] {
@@ -142,7 +142,7 @@ a:hover {
 #floating-save-btn {
   padding: 0.45rem 0.75rem;
   background: color-mix(in srgb, var(--success) 38%, white);
-  color: #0f1814;
+  color: var(--text);
   border: 1px solid color-mix(in srgb, var(--success) 50%, transparent);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
   font-weight: 600;
@@ -155,7 +155,7 @@ a:hover {
 
 #floating-save-btn:hover {
   background: color-mix(in srgb, var(--success) 48%, white);
-  color: #0a120e;
+  color: var(--text);
 }
 
 .site-header {
@@ -1247,5 +1247,345 @@ ul, ol {
     position: static;
     width: 100%;
     margin-top: 0.8rem;
+  }
+}
+
+/* --- Pomodoro page --- */
+
+.pomo-timer-card {
+  align-items: center;
+  text-align: center;
+}
+
+.pomo-dots {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+}
+
+.pomo-dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 45%);
+  background: transparent;
+  transition: background 120ms linear;
+}
+
+.pomo-dot.is-done {
+  background: color-mix(in srgb, var(--accent), transparent 50%);
+}
+
+.pomo-dot.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  /* Pulsing ring while the matching work pomodoro is running. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 75%);
+}
+
+.pomo-state-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  justify-content: center;
+  font-size: 0.95em;
+}
+
+.pomo-state-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 45%);
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.8em;
+}
+
+.pomo-state-badge[data-phase="short_break"],
+.pomo-state-badge[data-phase="long_break"] {
+  color: var(--copy);
+  border-color: color-mix(in srgb, var(--copy), transparent 45%);
+}
+
+.pomo-state-badge[data-phase="idle"] {
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted), transparent 60%);
+}
+
+.pomo-timer-display {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 4rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  margin: 0.4rem 0 0.1rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pomo-task-label {
+  font-size: 1.05em;
+  color: var(--text);
+  min-height: 1.4em;
+}
+
+.pomo-task-label.is-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.pomo-controls {
+  justify-content: center;
+}
+
+.pomo-journal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  text-align: left;
+}
+
+.pomo-journal-label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 0.95em;
+}
+
+.pomo-journal-state {
+  font-size: 0.8em;
+  font-style: italic;
+}
+
+#pomo-journal {
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 1em;
+  line-height: 1.45;
+  padding: 0.5rem 0.6rem;
+}
+
+#pomo-journal:read-only {
+  background: color-mix(in srgb, var(--surface), transparent 4%);
+  color: var(--muted);
+  cursor: default;
+}
+
+.pomo-settings {
+  width: 100%;
+  text-align: left;
+}
+
+.pomo-settings summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.pomo-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.pomo-settings-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.92em;
+}
+
+.pomo-queue-form {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 720px) {
+  .pomo-queue-form {
+    grid-template-columns: 2fr 2fr auto;
+    align-items: end;
+  }
+
+  .pomo-queue-form .actions {
+    align-self: end;
+  }
+}
+
+.pomo-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pomo-queue-empty {
+  padding: 0.4rem 0;
+}
+
+.pomo-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 70%);
+  background: color-mix(in srgb, var(--surface), transparent 4%);
+}
+
+.pomo-queue-item.is-next {
+  border-color: color-mix(in srgb, var(--accent), transparent 30%);
+  background: color-mix(in srgb, var(--accent), transparent 88%);
+}
+
+.pomo-queue-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pomo-queue-source {
+  font-size: 0.85em;
+  color: var(--muted);
+  padding: 0.05rem 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--muted), transparent 65%);
+}
+
+.pomo-queue-actions {
+  display: inline-flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.pomo-today-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.7rem;
+  font-size: 1.05em;
+  margin: 0;
+}
+
+.pomo-history-heading {
+  margin: 0.2rem 0 0.1rem;
+  font-size: 1em;
+  font-weight: 500;
+}
+
+.pomo-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pomo-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem 0.45rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent), transparent 85%);
+  font-size: 0.93em;
+}
+
+.pomo-history-item[data-type="short_break"],
+.pomo-history-item[data-type="long_break"] {
+  color: var(--muted);
+}
+
+.pomo-history-row {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr auto;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.pomo-history-notes {
+  margin-left: 0.2rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid color-mix(in srgb, var(--accent), transparent 70%);
+}
+
+.pomo-history-notes summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.88em;
+}
+
+.pomo-history-notes summary:hover {
+  color: var(--accent);
+}
+
+.pomo-history-notes-body {
+  margin: 0.3rem 0 0;
+  padding: 0.3rem 0.4rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.95em;
+  background: color-mix(in srgb, var(--surface), transparent 4%);
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 80%);
+}
+
+.pomo-history-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.pomo-history-kind {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.8em;
+}
+
+.pomo-history-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pomo-history-flag {
+  font-size: 0.78em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pomo-history-flag.is-done {
+  color: var(--success);
+}
+
+.pomo-history-flag.is-abandoned {
+  color: var(--danger);
+}
+
+@media (max-width: 760px) {
+  .pomo-timer-display {
+    font-size: 3rem;
+  }
+
+  .pomo-history-row {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+
+  .pomo-history-item {
+    padding-bottom: 0.45rem;
+  }
+
+  .pomo-queue-item {
+    flex-wrap: wrap;
+  }
+
+  .pomo-queue-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }

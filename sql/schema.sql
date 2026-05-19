@@ -117,3 +117,18 @@ CREATE TABLE IF NOT EXISTS ticket_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ticket_items_ticket ON ticket_items (ticket_id, sort_order, id);
+
+CREATE TABLE IF NOT EXISTS pomodoro_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    task_label TEXT NOT NULL DEFAULT '',
+    source_id BIGINT NULL REFERENCES sources(id) ON DELETE SET NULL,
+    type TEXT NOT NULL DEFAULT 'work',
+    duration_sec INTEGER NOT NULL DEFAULT 1500,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    abandoned BOOLEAN NOT NULL DEFAULT FALSE,
+    notes TEXT NOT NULL DEFAULT '',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pomo_started ON pomodoro_sessions (started_at DESC);

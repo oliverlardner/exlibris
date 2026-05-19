@@ -4178,6 +4178,881 @@
     loadTickets();
   }
 
+  function wirePomodoro() {
+    const root = qs("#pomodoro-root");
+    if (!root) return;
+
+    const SETTINGS_KEY = "exlibris_pomo_settings";
+    const QUEUE_KEY = "exlibris_pomo_queue";
+
+    const timerDisplay = qs("#pomo-timer-display");
+    const stateBadge = qs("#pomo-state-badge");
+    const cycleLabel = qs("#pomo-cycle-label");
+    const taskLabelEl = qs("#pomo-task-label");
+    const dotsContainer = qs("#pomo-dots");
+    const startBtn = qs("#pomo-start-btn");
+    const pauseBtn = qs("#pomo-pause-btn");
+    const skipBtn = qs("#pomo-skip-btn");
+    const stopBtn = qs("#pomo-stop-btn");
+    const statusEl = qs("#pomo-status");
+    const queueListEl = qs("#pomo-queue-list");
+    const newTaskInput = qs("#pomo-new-task");
+    const newSourceInput = qs("#pomo-new-source");
+    const newSourceIdInput = qs("#pomo-new-source-id");
+    const addTaskBtn = qs("#pomo-add-task");
+    const historyListEl = qs("#pomo-history-list");
+    const todayCountEl = qs("#pomo-today-count");
+    const todayMinutesEl = qs("#pomo-today-minutes");
+    const cfgWork = qs("#pomo-cfg-work");
+    const cfgShort = qs("#pomo-cfg-short");
+    const cfgLong = qs("#pomo-cfg-long");
+    const cfgCycle = qs("#pomo-cfg-cycle");
+    const journalWrap = qs("#pomo-journal-wrap");
+    const journalInput = qs("#pomo-journal");
+    const journalState = qs("#pomo-journal-state");
+
+    if (
+      !timerDisplay ||
+      !stateBadge ||
+      !taskLabelEl ||
+      !dotsContainer ||
+      !startBtn ||
+      !pauseBtn ||
+      !skipBtn ||
+      !stopBtn ||
+      !queueListEl ||
+      !historyListEl
+    ) {
+      return;
+    }
+
+    // Default config — overridden by anything persisted in localStorage.
+    const DEFAULT_CFG = { workMin: 25, shortMin: 5, longMin: 15, cycle: 4 };
+    const STATE = {
+      cfg: { ...DEFAULT_CFG },
+      // Active interval kind: 'work' | 'short_break' | 'long_break' | 'idle'.
+      phase: "idle",
+      // 0-based index into the current cycle of work intervals (resets after long break).
+      cycleIndex: 0,
+      // Wall-clock target for the current phase end. null when not running.
+      endsAt: null,
+      // Remaining ms when paused; null when not paused.
+      pausedRemaining: null,
+      // Local DB id of the row tracking the current session (null when idle / paused / not yet persisted).
+      sessionId: null,
+      // The task currently driving the timer (null until a work interval starts).
+      activeTask: null,
+      queue: [],
+      sources: readJsonScript("pomo-sources-data", []),
+      lastTickShown: "",
+      // Notes journal: only meaningful during 'work' phases. The textarea is
+      // hidden for breaks / idle, and locked (read-only) after the phase ends.
+      journalAutosaveTimer: null,
+      journalAutosaveInflight: false,
+      journalDirty: false,
+      journalLastSavedValue: "",
+    };
+
+    // --- helpers --------------------------------------------------------
+
+    function setLocalStatus(msg, isError) {
+      if (statusEl) {
+        statusEl.textContent = msg || "";
+        statusEl.classList.toggle("error", Boolean(isError));
+      }
+    }
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          STATE.cfg = {
+            workMin: clampInt(parsed.workMin, 1, 120, DEFAULT_CFG.workMin),
+            shortMin: clampInt(parsed.shortMin, 1, 60, DEFAULT_CFG.shortMin),
+            longMin: clampInt(parsed.longMin, 1, 120, DEFAULT_CFG.longMin),
+            cycle: clampInt(parsed.cycle, 2, 8, DEFAULT_CFG.cycle),
+          };
+        }
+      } catch (_) {}
+    }
+
+    function persistSettings() {
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(STATE.cfg));
+      } catch (_) {}
+    }
+
+    function loadQueue() {
+      try {
+        const raw = localStorage.getItem(QUEUE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          STATE.queue = parsed
+            .map((item) => normalizeQueueItem(item))
+            .filter((item) => item !== null);
+        }
+      } catch (_) {}
+    }
+
+    function persistQueue() {
+      try {
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(STATE.queue));
+      } catch (_) {}
+    }
+
+    function normalizeQueueItem(item) {
+      if (!item || typeof item !== "object") return null;
+      const label = String(item.label || "").trim();
+      if (!label) return null;
+      const sid = Number(item.source_id);
+      return {
+        id: Number(item.id) || Date.now() + Math.floor(Math.random() * 1000),
+        label,
+        source_id: Number.isFinite(sid) && sid > 0 ? sid : null,
+        source_title: String(item.source_title || ""),
+      };
+    }
+
+    function clampInt(value, min, max, fallback) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return fallback;
+      const i = Math.round(n);
+      if (i < min) return min;
+      if (i > max) return max;
+      return i;
+    }
+
+    function syncCfgInputsFromState() {
+      if (cfgWork) cfgWork.value = String(STATE.cfg.workMin);
+      if (cfgShort) cfgShort.value = String(STATE.cfg.shortMin);
+      if (cfgLong) cfgLong.value = String(STATE.cfg.longMin);
+      if (cfgCycle) cfgCycle.value = String(STATE.cfg.cycle);
+    }
+
+    function readCfgInputs() {
+      STATE.cfg = {
+        workMin: clampInt(cfgWork && cfgWork.value, 1, 120, DEFAULT_CFG.workMin),
+        shortMin: clampInt(cfgShort && cfgShort.value, 1, 60, DEFAULT_CFG.shortMin),
+        longMin: clampInt(cfgLong && cfgLong.value, 1, 120, DEFAULT_CFG.longMin),
+        cycle: clampInt(cfgCycle && cfgCycle.value, 2, 8, DEFAULT_CFG.cycle),
+      };
+      persistSettings();
+      if (STATE.phase === "idle") renderTimer();
+    }
+
+    function phaseDurationSec(phase) {
+      if (phase === "short_break") return STATE.cfg.shortMin * 60;
+      if (phase === "long_break") return STATE.cfg.longMin * 60;
+      return STATE.cfg.workMin * 60;
+    }
+
+    function phaseLabel(phase) {
+      if (phase === "short_break") return "Short break";
+      if (phase === "long_break") return "Long break";
+      if (phase === "work") return "Work";
+      return "Ready";
+    }
+
+    function formatTime(ms) {
+      const totalSec = Math.max(0, Math.ceil(ms / 1000));
+      const m = Math.floor(totalSec / 60);
+      const s = totalSec % 60;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    function remainingMs() {
+      if (STATE.pausedRemaining !== null) return STATE.pausedRemaining;
+      if (STATE.endsAt === null) return phaseDurationSec(STATE.phase === "idle" ? "work" : STATE.phase) * 1000;
+      return Math.max(0, STATE.endsAt - Date.now());
+    }
+
+    // --- rendering ------------------------------------------------------
+
+    function renderTimer() {
+      const ms = remainingMs();
+      const display = formatTime(ms);
+      if (display !== STATE.lastTickShown) {
+        timerDisplay.textContent = display;
+        STATE.lastTickShown = display;
+        // Update the tab title while a session is running so users can keep
+        // an eye on the timer from another tab.
+        if (STATE.phase !== "idle" && STATE.pausedRemaining === null && STATE.endsAt !== null) {
+          document.title = `${display} · ${phaseLabel(STATE.phase)} | Ex Libris`;
+        }
+      }
+
+      const isIdle = STATE.phase === "idle";
+      stateBadge.textContent = isIdle ? "Ready" : phaseLabel(STATE.phase);
+      stateBadge.dataset.phase = STATE.phase;
+
+      const cycle = STATE.cfg.cycle;
+      const dotIndex = Math.min(STATE.cycleIndex, cycle - 1);
+      if (cycleLabel) {
+        cycleLabel.textContent = `Pomodoro ${Math.min(STATE.cycleIndex + 1, cycle)} of ${cycle}`;
+      }
+
+      // Refresh dot indicator to match cycle progress and active phase.
+      const existing = dotsContainer.querySelectorAll(".pomo-dot");
+      // Always render `cycle` dots; rebuild if count mismatches.
+      if (existing.length !== cycle) {
+        dotsContainer.innerHTML = "";
+        for (let i = 0; i < cycle; i += 1) {
+          const span = document.createElement("span");
+          span.className = "pomo-dot";
+          span.dataset.index = String(i);
+          dotsContainer.appendChild(span);
+        }
+      }
+      dotsContainer.querySelectorAll(".pomo-dot").forEach((dot, idx) => {
+        const isPast = idx < STATE.cycleIndex;
+        const isActive = idx === dotIndex && STATE.phase === "work";
+        dot.classList.toggle("is-done", isPast);
+        dot.classList.toggle("is-active", isActive);
+      });
+
+      // Task label
+      if (STATE.phase === "work" && STATE.activeTask) {
+        const hint = STATE.activeTask.source_title
+          ? ` (${STATE.activeTask.source_title})`
+          : "";
+        taskLabelEl.textContent = STATE.activeTask.label + hint;
+        taskLabelEl.classList.remove("is-empty");
+      } else if (STATE.phase === "short_break" || STATE.phase === "long_break") {
+        taskLabelEl.textContent = STATE.phase === "long_break" ? "Long break — step away" : "Short break";
+        taskLabelEl.classList.remove("is-empty");
+      } else {
+        const next = STATE.queue[0];
+        taskLabelEl.textContent = next ? `Next: ${next.label}` : "No task selected";
+        taskLabelEl.classList.toggle("is-empty", !next);
+      }
+
+      // Button enabled states
+      const running = STATE.phase !== "idle" && STATE.endsAt !== null && STATE.pausedRemaining === null;
+      const paused = STATE.pausedRemaining !== null;
+      startBtn.textContent = paused ? "Resume" : running ? "Running…" : "Start";
+      startBtn.disabled = running;
+      pauseBtn.disabled = !running;
+      stopBtn.disabled = STATE.phase === "idle";
+      // Skip is always available — even before starting it lets you skip the queue head.
+
+      // Keep the journal state in sync (paused vs running vs locked) so the
+      // helper text under the textarea always matches the timer.
+      applyJournalState();
+    }
+
+    function renderQueue() {
+      queueListEl.innerHTML = "";
+      if (STATE.queue.length === 0) {
+        const li = document.createElement("li");
+        li.className = "pomo-queue-empty muted";
+        li.textContent = "Queue is empty.";
+        queueListEl.appendChild(li);
+        return;
+      }
+      STATE.queue.forEach((item, idx) => {
+        const li = document.createElement("li");
+        li.className = "pomo-queue-item";
+        if (idx === 0) li.classList.add("is-next");
+
+        const label = document.createElement("span");
+        label.className = "pomo-queue-label";
+        label.textContent = item.label;
+        li.appendChild(label);
+
+        if (item.source_title) {
+          const tag = document.createElement("span");
+          tag.className = "pomo-queue-source";
+          tag.textContent = item.source_title;
+          li.appendChild(tag);
+        }
+
+        const actions = document.createElement("span");
+        actions.className = "pomo-queue-actions";
+
+        const upBtn = document.createElement("button");
+        upBtn.type = "button";
+        upBtn.className = "btn btn-secondary";
+        upBtn.textContent = "Up";
+        upBtn.disabled = idx === 0;
+        upBtn.addEventListener("click", () => moveTask(idx, -1));
+        actions.appendChild(upBtn);
+
+        const downBtn = document.createElement("button");
+        downBtn.type = "button";
+        downBtn.className = "btn btn-secondary";
+        downBtn.textContent = "Down";
+        downBtn.disabled = idx === STATE.queue.length - 1;
+        downBtn.addEventListener("click", () => moveTask(idx, 1));
+        actions.appendChild(downBtn);
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "btn btn-danger";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", () => removeTask(idx));
+        actions.appendChild(removeBtn);
+
+        li.appendChild(actions);
+        queueListEl.appendChild(li);
+      });
+    }
+
+    function renderHistory(sessions) {
+      historyListEl.innerHTML = "";
+      if (!Array.isArray(sessions) || sessions.length === 0) {
+        const li = document.createElement("li");
+        li.className = "muted";
+        li.textContent = "No sessions yet.";
+        historyListEl.appendChild(li);
+        return;
+      }
+      sessions.slice(0, 25).forEach((sess) => {
+        const li = document.createElement("li");
+        li.className = "pomo-history-item";
+        li.dataset.type = String(sess.type || "");
+
+        // Top row mirrors the original compact summary.
+        const row = document.createElement("div");
+        row.className = "pomo-history-row";
+
+        const when = document.createElement("span");
+        when.className = "pomo-history-time muted";
+        when.textContent = formatHistoryTime(sess.started_at);
+        row.appendChild(when);
+
+        const kind = document.createElement("span");
+        kind.className = "pomo-history-kind";
+        kind.textContent = phaseLabel(String(sess.type || ""));
+        row.appendChild(kind);
+
+        const minutes = Math.round(Number(sess.duration_sec || 0) / 60);
+        const dur = document.createElement("span");
+        dur.className = "pomo-history-dur muted";
+        dur.textContent = `${minutes} min`;
+        row.appendChild(dur);
+
+        const label = document.createElement("span");
+        label.className = "pomo-history-label";
+        const parts = [];
+        if (sess.task_label) parts.push(sess.task_label);
+        if (sess.source_title) parts.push(`(${sess.source_title})`);
+        label.textContent = parts.join(" ");
+        row.appendChild(label);
+
+        const flag = document.createElement("span");
+        flag.className = "pomo-history-flag";
+        if (sess.abandoned) {
+          flag.textContent = "abandoned";
+          flag.classList.add("is-abandoned");
+        } else if (sess.completed) {
+          flag.textContent = "done";
+          flag.classList.add("is-done");
+        } else {
+          flag.textContent = "in progress";
+        }
+        row.appendChild(flag);
+
+        li.appendChild(row);
+
+        // Notes — only shown for work sessions that have something saved.
+        // Collapsed by default so the list stays scannable; expand to see
+        // exactly what the user typed during that session.
+        const notes = String(sess.notes || "").trim();
+        if (notes && String(sess.type || "") === "work") {
+          const details = document.createElement("details");
+          details.className = "pomo-history-notes";
+          const summary = document.createElement("summary");
+          summary.textContent = "Notes from this session";
+          details.appendChild(summary);
+          const body = document.createElement("pre");
+          body.className = "pomo-history-notes-body";
+          body.textContent = notes;
+          details.appendChild(body);
+          li.appendChild(details);
+        }
+
+        historyListEl.appendChild(li);
+      });
+    }
+
+    function renderTodayStats(stats) {
+      if (todayCountEl) todayCountEl.textContent = String(stats?.completed_count ?? 0);
+      if (todayMinutesEl) todayMinutesEl.textContent = String(stats?.focused_minutes ?? 0);
+    }
+
+    function formatHistoryTime(value) {
+      if (!value) return "";
+      const dt = new Date(value);
+      if (Number.isNaN(dt.getTime())) return String(value);
+      return dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    // --- queue mutation -------------------------------------------------
+
+    function moveTask(idx, delta) {
+      const target = idx + delta;
+      if (target < 0 || target >= STATE.queue.length) return;
+      const [item] = STATE.queue.splice(idx, 1);
+      STATE.queue.splice(target, 0, item);
+      persistQueue();
+      renderQueue();
+      renderTimer();
+    }
+
+    function removeTask(idx) {
+      STATE.queue.splice(idx, 1);
+      persistQueue();
+      renderQueue();
+      renderTimer();
+    }
+
+    function addTaskFromForm() {
+      const label = String(newTaskInput?.value || "").trim();
+      if (!label) {
+        setLocalStatus("Type a task before adding it.", true);
+        return;
+      }
+
+      // Resolve source — try the hidden id first, then look up the typed
+      // label against the datalist mapping.
+      let sourceId = newSourceIdInput && newSourceIdInput.value
+        ? Number(newSourceIdInput.value) || null
+        : null;
+      let sourceTitle = "";
+      if (!sourceId) {
+        const typed = String(newSourceInput?.value || "").trim();
+        if (typed) {
+          const hit = STATE.sources.find((opt) => {
+            const fullLabel = opt.label + (opt.hint ? " — " + opt.hint : "");
+            return fullLabel === typed || opt.label === typed;
+          });
+          if (hit) {
+            sourceId = Number(hit.id) || null;
+            sourceTitle = hit.label;
+          }
+        }
+      } else {
+        const hit = STATE.sources.find((opt) => Number(opt.id) === sourceId);
+        if (hit) sourceTitle = hit.label;
+      }
+
+      const item = normalizeQueueItem({
+        label,
+        source_id: sourceId,
+        source_title: sourceTitle,
+      });
+      if (item === null) return;
+      STATE.queue.push(item);
+      persistQueue();
+      renderQueue();
+      renderTimer();
+
+      if (newTaskInput) newTaskInput.value = "";
+      if (newSourceInput) newSourceInput.value = "";
+      if (newSourceIdInput) newSourceIdInput.value = "";
+      setLocalStatus("Added to queue.");
+      if (newTaskInput) newTaskInput.focus();
+    }
+
+    // --- session lifecycle ---------------------------------------------
+
+    async function refreshHistory() {
+      try {
+        const res = await fetch(endpoint("/api/pomodoro.php?limit=50"));
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "Could not load history.");
+        }
+        renderHistory(data.sessions || []);
+        renderTodayStats(data.today || {});
+      } catch (e) {
+        // Non-fatal — history is supplemental.
+        // eslint-disable-next-line no-console
+        console.warn("pomodoro history load failed", e);
+      }
+    }
+
+    function maybeNotify(title, body) {
+      if (typeof Notification === "undefined") return;
+      if (Notification.permission !== "granted") return;
+      try {
+        new Notification(title, { body, silent: false });
+      } catch (_) {}
+    }
+
+    function requestNotificationsOnce() {
+      if (typeof Notification === "undefined") return;
+      if (Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    }
+
+    // --- journal (per-session notes) ------------------------------------
+
+    /**
+     * Decide whether the textarea should be shown and whether it should be
+     * editable. The journal only appears for `work` phases — it's a focus
+     * aid, not a break activity. Locked after the phase ends.
+     */
+    function applyJournalState() {
+      if (!journalWrap || !journalInput) return;
+
+      const isWork = STATE.phase === "work";
+      const running = STATE.endsAt !== null;
+      const paused = STATE.pausedRemaining !== null;
+      const editable = isWork && (running || paused) && STATE.sessionId !== null;
+
+      journalWrap.classList.toggle("hidden", !isWork);
+      journalWrap.setAttribute("aria-hidden", isWork ? "false" : "true");
+      journalInput.readOnly = !editable;
+      journalInput.disabled = !isWork; // disabled visually if we're not in a work phase at all
+
+      if (journalState) {
+        if (!isWork) {
+          journalState.textContent = "";
+        } else if (paused) {
+          journalState.textContent = "Paused — still editable.";
+        } else if (editable) {
+          journalState.textContent = "Autosaving as you type.";
+        } else {
+          journalState.textContent = "Locked — this session's notes are read-only.";
+        }
+      }
+    }
+
+    /**
+     * POST the current textarea value to the API. No-op when there's no
+     * active session id or when nothing has actually changed since the
+     * last save (cuts down on chatter).
+     */
+    async function flushJournal(opts) {
+      if (!journalInput) return;
+      if (!STATE.sessionId) return;
+      const value = String(journalInput.value || "");
+      const force = !!(opts && opts.force);
+      if (!force && value === STATE.journalLastSavedValue) return;
+      if (STATE.journalAutosaveInflight && !force) return;
+
+      STATE.journalAutosaveInflight = true;
+      try {
+        await postJson("/api/pomodoro.php", {
+          action: "update_notes",
+          id: STATE.sessionId,
+          notes: value,
+        });
+        STATE.journalLastSavedValue = value;
+        STATE.journalDirty = false;
+      } catch (e) {
+        // Autosave failures are non-fatal — the final complete/abandon call
+        // will carry the latest value anyway, so just surface a hint.
+        setLocalStatus("Journal autosave failed: " + (e.message || "error"), true);
+      } finally {
+        STATE.journalAutosaveInflight = false;
+      }
+    }
+
+    function scheduleJournalAutosave() {
+      STATE.journalDirty = true;
+      if (STATE.journalAutosaveTimer) {
+        clearTimeout(STATE.journalAutosaveTimer);
+      }
+      STATE.journalAutosaveTimer = setTimeout(() => {
+        STATE.journalAutosaveTimer = null;
+        flushJournal();
+      }, 1200);
+    }
+
+    function resetJournalForNewWorkSession() {
+      if (!journalInput) return;
+      if (STATE.journalAutosaveTimer) {
+        clearTimeout(STATE.journalAutosaveTimer);
+        STATE.journalAutosaveTimer = null;
+      }
+      journalInput.value = "";
+      STATE.journalLastSavedValue = "";
+      STATE.journalDirty = false;
+    }
+
+    if (journalInput) {
+      journalInput.addEventListener("input", () => {
+        if (journalInput.readOnly) return;
+        scheduleJournalAutosave();
+      });
+      // Save immediately on blur so users who tab away mid-session don't
+      // lose what they just wrote.
+      journalInput.addEventListener("blur", () => {
+        if (journalInput.readOnly) return;
+        if (STATE.journalDirty) flushJournal({ force: true });
+      });
+    }
+
+    async function startPhase(phase) {
+      STATE.phase = phase;
+      const durationSec = phaseDurationSec(phase);
+
+      // For work intervals, pull the next task from the queue (without
+      // removing it — we'll remove on successful completion) and clear the
+      // journal so the previous session's text doesn't leak into this one.
+      let task = null;
+      if (phase === "work") {
+        task = STATE.queue[0] || null;
+        STATE.activeTask = task;
+        resetJournalForNewWorkSession();
+      } else {
+        STATE.activeTask = null;
+      }
+
+      STATE.endsAt = Date.now() + durationSec * 1000;
+      STATE.pausedRemaining = null;
+      STATE.lastTickShown = "";
+      renderTimer();
+      applyJournalState();
+
+      // Persist the session row so completed/abandoned counts are accurate.
+      try {
+        const data = await postJson("/api/pomodoro.php", {
+          action: "start",
+          type: phase,
+          duration_sec: durationSec,
+          task_label: task ? task.label : "",
+          source_id: task && task.source_id ? task.source_id : null,
+        });
+        STATE.sessionId = data?.session?.id || null;
+      } catch (e) {
+        setLocalStatus("Could not log session start: " + (e.message || "error"), true);
+        STATE.sessionId = null;
+      }
+
+      // Re-evaluate journal state now that we have (or failed to get) a
+      // session id, and auto-focus the textarea so the user can start
+      // typing right away.
+      applyJournalState();
+      if (phase === "work" && STATE.sessionId && journalInput && !journalInput.readOnly) {
+        // Don't steal focus if the user already moved on (e.g. to the queue).
+        if (document.activeElement === document.body) {
+          journalInput.focus();
+        }
+      }
+
+      setLocalStatus(`${phaseLabel(phase)} started.`);
+    }
+
+    async function endPhase(abandoned) {
+      const finishingPhase = STATE.phase;
+      const finishingSessionId = STATE.sessionId;
+      const finishingTask = STATE.activeTask;
+
+      // Cancel any pending autosave — we're about to send the final value
+      // explicitly with the complete/abandon call, and we want to lock the
+      // textarea before any race-y autosave POST sneaks in afterwards.
+      if (STATE.journalAutosaveTimer) {
+        clearTimeout(STATE.journalAutosaveTimer);
+        STATE.journalAutosaveTimer = null;
+      }
+      const finalNotes = journalInput && finishingPhase === "work"
+        ? String(journalInput.value || "")
+        : null;
+
+      STATE.phase = "idle";
+      STATE.endsAt = null;
+      STATE.pausedRemaining = null;
+      STATE.sessionId = null;
+      STATE.activeTask = null;
+
+      if (finishingSessionId) {
+        try {
+          const payload = {
+            action: abandoned ? "abandon" : "complete",
+            id: finishingSessionId,
+          };
+          if (finalNotes !== null) payload.notes = finalNotes;
+          await postJson("/api/pomodoro.php", payload);
+        } catch (e) {
+          setLocalStatus("Could not log session end: " + (e.message || "error"), true);
+        }
+      }
+
+      // Lock the textarea visually now that the row is closed — the user
+      // can still read what they wrote until the next work session clears
+      // it, but no further edits go through.
+      applyJournalState();
+
+      // On natural completion of a work interval, drop the head task from the queue.
+      if (!abandoned && finishingPhase === "work" && finishingTask) {
+        const idx = STATE.queue.findIndex((q) => q.id === finishingTask.id);
+        if (idx !== -1) {
+          STATE.queue.splice(idx, 1);
+          persistQueue();
+        }
+      }
+
+      // Reset tab title.
+      document.title = "Pomodoro | Ex Libris";
+
+      // Advance the cycle / decide what's next.
+      if (!abandoned) {
+        if (finishingPhase === "work") {
+          STATE.cycleIndex += 1;
+          const nextPhase = STATE.cycleIndex >= STATE.cfg.cycle ? "long_break" : "short_break";
+          maybeNotify("Pomodoro complete", `Time for a ${nextPhase === "long_break" ? "long" : "short"} break.`);
+          renderQueue();
+          await startPhase(nextPhase);
+          return;
+        }
+        if (finishingPhase === "long_break") {
+          STATE.cycleIndex = 0;
+        }
+        maybeNotify("Break over", "Ready for the next pomodoro.");
+      }
+
+      renderQueue();
+      renderTimer();
+      // Refresh server-side stats after any natural transition.
+      refreshHistory();
+    }
+
+    function tick() {
+      if (STATE.phase === "idle") return;
+      if (STATE.pausedRemaining !== null) return;
+      if (STATE.endsAt === null) return;
+      const remaining = STATE.endsAt - Date.now();
+      if (remaining <= 0) {
+        endPhase(false);
+        return;
+      }
+      renderTimer();
+    }
+
+    // --- button wiring --------------------------------------------------
+
+    startBtn.addEventListener("click", () => {
+      requestNotificationsOnce();
+      if (STATE.pausedRemaining !== null) {
+        // Resume: shift the end target forward by the paused remaining time.
+        STATE.endsAt = Date.now() + STATE.pausedRemaining;
+        STATE.pausedRemaining = null;
+        renderTimer();
+        setLocalStatus("Resumed.");
+        return;
+      }
+      if (STATE.phase === "idle") {
+        startPhase("work");
+      }
+    });
+
+    pauseBtn.addEventListener("click", () => {
+      if (STATE.phase === "idle" || STATE.endsAt === null) return;
+      STATE.pausedRemaining = Math.max(0, STATE.endsAt - Date.now());
+      STATE.endsAt = null;
+      renderTimer();
+      setLocalStatus("Paused.");
+    });
+
+    skipBtn.addEventListener("click", async () => {
+      // If a phase is running, end the current phase early (counts as completed
+      // so the cycle still advances). If idle, simply pop the queue head.
+      if (STATE.phase !== "idle") {
+        await endPhase(false);
+        return;
+      }
+      if (STATE.queue.length > 0) {
+        STATE.queue.shift();
+        persistQueue();
+        renderQueue();
+        renderTimer();
+        setLocalStatus("Skipped task.");
+      }
+    });
+
+    stopBtn.addEventListener("click", async () => {
+      if (STATE.phase === "idle") return;
+      if (!window.confirm("Stop the current session? It will be marked abandoned.")) return;
+      // Reset cycle progress on a manual stop so the next start is fresh.
+      STATE.cycleIndex = 0;
+      await endPhase(true);
+      setLocalStatus("Session stopped.");
+    });
+
+    if (addTaskBtn) addTaskBtn.addEventListener("click", addTaskFromForm);
+    if (newTaskInput) {
+      newTaskInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addTaskFromForm();
+        }
+      });
+    }
+    if (newSourceInput) {
+      // Datalist selection doesn't fire 'change' reliably across browsers when
+      // the user just types — re-resolve the id on each input event.
+      newSourceInput.addEventListener("input", () => {
+        const typed = String(newSourceInput.value || "").trim();
+        if (!typed) {
+          if (newSourceIdInput) newSourceIdInput.value = "";
+          return;
+        }
+        const hit = STATE.sources.find((opt) => {
+          const fullLabel = opt.label + (opt.hint ? " — " + opt.hint : "");
+          return fullLabel === typed || opt.label === typed;
+        });
+        if (newSourceIdInput) newSourceIdInput.value = hit ? String(hit.id) : "";
+      });
+    }
+
+    [cfgWork, cfgShort, cfgLong, cfgCycle].forEach((input) => {
+      if (input) input.addEventListener("change", readCfgInputs);
+    });
+
+    // --- visibility / cleanup ------------------------------------------
+
+    // Recompute on tab focus in case timers were throttled.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) tick();
+    });
+
+    // If the user navigates away mid-session, mark the session abandoned so
+    // it doesn't sit forever as "in progress" in the history. Use fetch with
+    // keepalive (rather than sendBeacon) because the API requires the admin
+    // token header and sendBeacon can't set headers.
+    window.addEventListener("pagehide", () => {
+      if (!STATE.sessionId || STATE.phase === "idle") return;
+      try {
+        const payload = { action: "abandon", id: STATE.sessionId };
+        // Carry whatever the user had typed at the moment they left so the
+        // journal isn't lost when they navigate away mid-session.
+        if (journalInput && STATE.phase === "work") {
+          payload.notes = String(journalInput.value || "");
+        }
+        fetch(endpoint("/api/pomodoro.php"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken() },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        });
+      } catch (_) {}
+    });
+
+    // --- init -----------------------------------------------------------
+
+    loadSettings();
+    syncCfgInputsFromState();
+    loadQueue();
+    renderQueue();
+
+    const initialHistory = readJsonScript("pomo-initial-history", []);
+    const initialStats = readJsonScript("pomo-initial-stats", {});
+    renderHistory(initialHistory);
+    renderTodayStats(initialStats);
+
+    renderTimer();
+    applyJournalState();
+    setInterval(tick, 250);
+    setLocalStatus("Add a task and press Start.");
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     const processBtn = qs("#process-input");
     if (processBtn) processBtn.addEventListener("click", processDumpInput);
@@ -4204,5 +5079,6 @@
     wireFloatingSaveBar();
     wireMilestones();
     wireTickets();
+    wirePomodoro();
   });
 })();
